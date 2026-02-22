@@ -23,6 +23,8 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
         run: flutter build apk --debug
 
       - name: Upload APK
