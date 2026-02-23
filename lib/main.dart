@@ -49,7 +49,7 @@ class _MapScreenState extends State<MapScreen> {
   double _weatherTemp = 0;
   double _windSpeed = 0;
   late WeatherService _weatherService;
-  final POIService _poiService = POIService();
+  final POIService _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
   List<POI> _pois = [];
   bool _showFuel = false;
   bool _showWater = false;

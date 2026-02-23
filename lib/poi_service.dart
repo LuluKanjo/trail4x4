@@ -10,15 +10,50 @@ class POI {
 }
 
 class POIService {
+  final String tomtomKey;
+  POIService({this.tomtomKey = ''});
+
   Future<List<POI>> fetchPOIs(double lat, double lon, String type) async {
-    String query = '';
     if (type == 'fuel') {
-      query = '[out:json];node["amenity"="fuel"](around:10000,$lat,$lon);out;';
+      return _fetchFuelTomTom(lat, lon);
     } else if (type == 'water') {
-      query = '[out:json];(node["amenity"="drinking_water"](around:10000,$lat,$lon);node["natural"="spring"](around:10000,$lat,$lon););out;';
+      return _fetchOSM(lat, lon,
+          '[out:json];(node["amenity"="drinking_water"](around:10000,$lat,$lon);node["natural"="spring"](around:10000,$lat,$lon););out;',
+          'water');
     } else if (type == 'camp') {
-      query = '[out:json];(node["tourism"="camp_site"](around:20000,$lat,$lon);node["tourism"="wilderness_hut"](around:20000,$lat,$lon););out;';
+      return _fetchOSM(lat, lon,
+          '[out:json];(node["tourism"="camp_site"](around:20000,$lat,$lon);node["tourism"="wilderness_hut"](around:20000,$lat,$lon););out;',
+          'camp');
     }
+    return [];
+  }
+
+  Future<List<POI>> _fetchFuelTomTom(double lat, double lon) async {
+    try {
+      final url =
+          'https://api.tomtom.com/search/2/poiSearch/station%20essence.json?lat=$lat&lon=$lon&radius=10000&limit=50&categorySet=7311&key=$tomtomKey';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final List<POI> pois = [];
+        for (final result in data['results']) {
+          final name = result['poi']?['name'] ?? 'Station essence';
+          final position = result['position'];
+          pois.add(POI(
+            position: LatLng(position['lat'].toDouble(), position['lon'].toDouble()),
+            name: name,
+            type: 'fuel',
+          ));
+        }
+        return pois;
+      }
+    } catch (e) {
+      return [];
+    }
+    return [];
+  }
+
+  Future<List<POI>> _fetchOSM(double lat, double lon, String query, String type) async {
     try {
       final response = await http.post(
         Uri.parse('https://overpass-api.de/api/interpreter'),
@@ -45,7 +80,6 @@ class POIService {
 
   String _defaultName(String type) {
     switch (type) {
-      case 'fuel': return 'Station essence';
       case 'water': return 'Point eau';
       case 'camp': return 'Bivouac';
       default: return 'POI';
