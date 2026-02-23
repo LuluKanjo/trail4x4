@@ -12,6 +12,7 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
+    // Profil car-test ou car-eco pour BRouter
     final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=car-eco&alternativeidx=0&format=geojson';
     
     try {
@@ -21,6 +22,7 @@ class RoutingService {
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
         final double dist = feature['properties']['track-length'].toDouble();
+        
         final points = coords.map((p) => LatLng(p[1], p[0])).toList();
         return RouteData(points, dist);
       }
