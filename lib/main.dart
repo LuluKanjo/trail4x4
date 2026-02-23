@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'weather_service.dart';
 
 void main() {
   runApp(const Trail4x4App());
@@ -19,13 +20,14 @@ class Trail4x4App extends StatelessWidget {
     return MaterialApp(
       title: 'Trail 4x4',
       theme: ThemeData.dark(),
-      home: const MapScreen(),
+      home: const MapScreen(weatherKey: '40ec667fbf278cf67533b2c70d799dd1'),
     );
   }
 }
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  final String weatherKey;
+  const MapScreen({super.key, required this.weatherKey});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -42,10 +44,15 @@ class _MapScreenState extends State<MapScreen> {
   bool _isRecording = false;
   List<LatLng> _trace = [];
   List<LatLng> _tracePoints = [];
+  String _weatherDesc = '';
+  double _weatherTemp = 0;
+  double _windSpeed = 0;
+  late WeatherService _weatherService;
 
   @override
   void initState() {
     super.initState();
+    _weatherService = WeatherService(widget.weatherKey);
     _startTracking();
     _loadContacts();
   }
@@ -62,9 +69,23 @@ class _MapScreenState extends State<MapScreen> {
     await prefs.setStringList('sos_contacts', _sosContacts);
   }
 
+  Future<void> _updateWeather() async {
+    final data = await _weatherService.getWeather(
+        _currentPosition.latitude, _currentPosition.longitude);
+    if (data != null) {
+      setState(() {
+        _weatherDesc = data['weather'][0]['description'];
+        _weatherTemp = data['main']['temp'].toDouble();
+        _windSpeed = data['wind']['speed'].toDouble();
+      });
+    }
+  }
+
   Future<void> _startTracking() async {
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) return;
+
+    _updateWeather();
 
     Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
@@ -97,14 +118,10 @@ class _MapScreenState extends State<MapScreen> {
   void _toggleRecording() async {
     if (_isRecording) {
       await _saveGPX();
-      setState(() {
-        _isRecording = false;
-      });
+      setState(() => _isRecording = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Trace enregistrée !'),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text('Trace enregistrée !'),
+            backgroundColor: Colors.green),
       );
     } else {
       setState(() {
@@ -113,10 +130,8 @@ class _MapScreenState extends State<MapScreen> {
         _distance = 0;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enregistrement de la trace démarré !'),
-          backgroundColor: Colors.orange,
-        ),
+        const SnackBar(content: Text('Enregistrement démarré !'),
+            backgroundColor: Colors.orange),
       );
     }
   }
@@ -128,7 +143,6 @@ class _MapScreenState extends State<MapScreen> {
     final filename =
         'trace_${now.year}${now.month}${now.day}_${now.hour}${now.minute}.gpx';
     final file = File('${dir.path}/$filename');
-
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
     buffer.writeln('<gpx version="1.1" creator="Trail4x4">');
@@ -144,10 +158,8 @@ class _MapScreenState extends State<MapScreen> {
   void _sendSOS() async {
     if (_sosContacts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ajoutez des contacts SOS dans les paramètres.'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('Ajoutez des contacts SOS.'),
+            backgroundColor: Colors.red),
       );
       return;
     }
@@ -269,28 +281,60 @@ class _MapScreenState extends State<MapScreen> {
             right: 0,
             child: Container(
               color: Colors.brown[900]!.withValues(alpha: 0.9),
-              padding: const EdgeInsets.fromLTRB(16, 40, 16, 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.fromLTRB(16, 40, 16, 8),
+              child: Column(
                 children: [
-                  const Text('Trail 4x4',
-                      style: TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold)),
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      IconButton(
-                        icon: Icon(
-                          _isRecording ? Icons.stop_circle : Icons.fiber_manual_record,
-                          color: _isRecording ? Colors.red : Colors.orange,
-                        ),
-                        onPressed: _toggleRecording,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.contacts, color: Colors.orange),
-                        onPressed: _showContactsDialog,
+                      const Text('Trail 4x4',
+                          style: TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.bold)),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              _isRecording
+                                  ? Icons.stop_circle
+                                  : Icons.fiber_manual_record,
+                              color: _isRecording
+                                  ? Colors.red
+                                  : Colors.orange,
+                            ),
+                            onPressed: _toggleRecording,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.contacts,
+                                color: Colors.orange),
+                            onPressed: _showContactsDialog,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.cloud,
+                                color: Colors.orange),
+                            onPressed: _updateWeather,
+                          ),
+                        ],
                       ),
                     ],
                   ),
+                  if (_weatherDesc.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          Text('🌡️ ${_weatherTemp.toStringAsFixed(0)}°C',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13)),
+                          Text('💨 ${_windSpeed.toStringAsFixed(0)} m/s',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13)),
+                          Text(_weatherDesc,
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 13)),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -331,7 +375,8 @@ class _MapScreenState extends State<MapScreen> {
                   _buildStat('Altitude',
                       '${_altitude.toStringAsFixed(0)} m', Icons.terrain),
                   _buildStat('Distance',
-                      '${_distance.toStringAsFixed(2)} km', Icons.straighten),
+                      '${_distance.toStringAsFixed(2)} km',
+                      Icons.straighten),
                 ],
               ),
             ),
