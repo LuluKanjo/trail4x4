@@ -4,10 +4,13 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'weather_service.dart';
 import 'poi_service.dart';
+import 'routing_service.dart';
 
 void main() {
   runApp(const Trail4x4App());
@@ -21,14 +24,25 @@ class Trail4x4App extends StatelessWidget {
     return MaterialApp(
       title: 'Trail 4x4',
       theme: ThemeData.dark(),
-      home: const MapScreen(weatherKey: '40ec667fbf278cf67533b2c70d799dd1'),
+      home: const MapScreen(
+        weatherKey: '40ec667fbf278cf67533b2c70d799dd1',
+        tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso',
+        graphhopperKey: 'b039ac17-7a0c-4f50-8b3c-1287c47b3001',
+      ),
     );
   }
 }
 
 class MapScreen extends StatefulWidget {
   final String weatherKey;
-  const MapScreen({super.key, required this.weatherKey});
+  final String tomtomKey;
+  final String graphhopperKey;
+  const MapScreen({
+    super.key,
+    required this.weatherKey,
+    required this.tomtomKey,
+    required this.graphhopperKey,
+  });
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -43,23 +57,28 @@ class _MapScreenState extends State<MapScreen> {
   LatLng? _lastPosition;
   List<String> _sosContacts = [];
   bool _isRecording = false;
-  List<LatLng> _trace = [];
+  final List<LatLng> _trace = [];
   List<LatLng> _tracePoints = [];
   String _weatherDesc = '';
   double _weatherTemp = 0;
   double _windSpeed = 0;
   late WeatherService _weatherService;
-  final POIService _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
-  List<POI> _pois = [];
+  late POIService _poiService;
+  late RoutingService _routingService;
+  final List<POI> _pois = [];
   bool _showFuel = false;
   bool _showWater = false;
   bool _showCamp = false;
   bool _loadingPOI = false;
+  List<LatLng> _route = [];
+  bool _loadingRoute = false;
 
   @override
   void initState() {
     super.initState();
     _weatherService = WeatherService(widget.weatherKey);
+    _poiService = POIService(tomtomKey: widget.tomtomKey);
+    _routingService = RoutingService(widget.graphhopperKey);
     _startTracking();
     _loadContacts();
   }
@@ -198,6 +217,78 @@ class _MapScreenState extends State<MapScreen> {
     }
     buffer.writeln('</trkseg></trk></gpx>');
     await file.writeAsString(buffer.toString());
+  }
+
+  Future<void> _calculateRoute(String destination) async {
+    setState(() => _loadingRoute = true);
+    try {
+      final url =
+          'https://nominatim.openstreetmap.org/search?q=$destination&format=json&limit=1';
+      final response = await http.get(Uri.parse(url),
+          headers: {'User-Agent': 'Trail4x4App'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data.isNotEmpty) {
+          final dest = LatLng(
+              double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+          final route =
+              await _routingService.getOffRoadRoute(_currentPosition, dest);
+          if (route != null) {
+            setState(() => _route = route);
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Impossible de calculer le trajet.'),
+                    backgroundColor: Colors.red),
+              );
+            }
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Destination introuvable.'),
+                  backgroundColor: Colors.red),
+            );
+          }
+        }
+      }
+    } catch (e) {}
+    setState(() => _loadingRoute = false);
+  }
+
+  void _showRouteDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Destination'),
+        backgroundColor: Colors.brown[900],
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: 'Ex: Millau, Aveyron'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler',
+                style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              if (controller.text.isNotEmpty) {
+                _calculateRoute(controller.text);
+              }
+            },
+            child: const Text('Calculer',
+                style: TextStyle(color: Colors.orange)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _sendSOS() async {
@@ -360,6 +451,16 @@ class _MapScreenState extends State<MapScreen> {
                     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.trail4x4.app',
               ),
+              if (_route.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _route,
+                      color: Colors.blue,
+                      strokeWidth: 5,
+                    ),
+                  ],
+                ),
               if (_trace.isNotEmpty)
                 PolylineLayer(
                   polylines: [
@@ -417,6 +518,18 @@ class _MapScreenState extends State<MapScreen> {
                       Row(
                         children: [
                           IconButton(
+                            icon: const Icon(Icons.route,
+                                color: Colors.orange),
+                            onPressed: _showRouteDialog,
+                          ),
+                          if (_route.isNotEmpty)
+                            IconButton(
+                              icon: const Icon(Icons.close,
+                                  color: Colors.red),
+                              onPressed: () =>
+                                  setState(() => _route = []),
+                            ),
+                          IconButton(
                             icon: Icon(
                               _isRecording
                                   ? Icons.stop_circle
@@ -471,7 +584,7 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
-          if (_loadingPOI)
+          if (_loadingPOI || _loadingRoute)
             const Center(child: CircularProgressIndicator()),
           Positioned(
             right: 16,
@@ -486,7 +599,7 @@ class _MapScreenState extends State<MapScreen> {
             left: 16,
             bottom: 140,
             child: FloatingActionButton(
-              onPressed: _sendSOS,
+              onPressed: _sendSOS ,
               backgroundColor: Colors.red[800],
               child: const Text('SOS',
                   style: TextStyle(
