@@ -79,6 +79,11 @@ class _MapScreenState extends State<MapScreen> {
   List<LatLng> _route = [];
   bool _loadingRoute = false;
 
+  // Variables pour le guidage
+  List<dynamic> _instructions = [];
+  int _currentInstructionIndex = 0;
+  String _currentInstruction = '';
+
   @override
   void initState() {
     super.initState();
@@ -162,17 +167,35 @@ class _MapScreenState extends State<MapScreen> {
         
         if (_lastPosition != null) {
           final Distance calculator = const Distance();
-          _distance += calculator.as(
-            LengthUnit.Kilometer,
-            _lastPosition!,
-            _currentPosition,
-          );
+          _distance += calculator.as(LengthUnit.Kilometer, _lastPosition!, _currentPosition);
         }
         _lastPosition = _currentPosition;
         
         if (_isRecording) {
           _tracePoints.add(_currentPosition);
           _trace.add(_currentPosition);
+        }
+
+        // --- Logique de Guidage (Turn by Turn) ---
+        if (_instructions.isNotEmpty && _route.isNotEmpty && _currentInstructionIndex < _instructions.length) {
+          final instruction = _instructions[_currentInstructionIndex];
+          final endPointIndex = instruction['interval'][1];
+          
+          if (endPointIndex < _route.length) {
+            final endPoint = _route[endPointIndex];
+            final Distance calculator = const Distance();
+            final distToTurn = calculator.as(LengthUnit.Meter, _currentPosition, endPoint);
+            
+            // Si on est à moins de 30m de l'intersection, on passe à l'instruction suivante
+            if (distToTurn < 30) {
+              _currentInstructionIndex++;
+              if (_currentInstructionIndex < _instructions.length) {
+                _currentInstruction = _instructions[_currentInstructionIndex]['text'];
+              } else {
+                _currentInstruction = 'Vous êtes arrivé !';
+              }
+            }
+          }
         }
       });
       _mapController.move(_currentPosition, _mapController.camera.zoom);
@@ -183,22 +206,14 @@ class _MapScreenState extends State<MapScreen> {
     if (_isRecording) {
       await _saveGPX();
       setState(() => _isRecording = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Trace sauvegardée !'), backgroundColor: Colors.green),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trace sauvegardée !'), backgroundColor: Colors.green));
     } else {
       setState(() {
         _isRecording = true;
         _tracePoints = [];
         _distance = 0;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enregistrement démarré'), backgroundColor: Colors.orange),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enregistrement démarré'), backgroundColor: Colors.orange));
     }
   }
 
@@ -221,7 +236,7 @@ class _MapScreenState extends State<MapScreen> {
       
       await file.writeAsString(buffer.toString());
     } catch (e) {
-      print("Erreur écriture GPX: $e");
+      debugPrint("Erreur écriture GPX: $e");
     }
   }
 
@@ -235,19 +250,26 @@ class _MapScreenState extends State<MapScreen> {
         final data = json.decode(response.body);
         if (data.isNotEmpty) {
           final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-          final route = await _routingService.getOffRoadRoute(_currentPosition, dest);
+          final routeData = await _routingService.getOffRoadRoute(_currentPosition, dest);
           
-          if (route != null && route.isNotEmpty) {
-            setState(() => _route = route);
+          if (routeData != null && routeData.points.isNotEmpty) {
+            setState(() {
+              _route = routeData.points;
+              _instructions = routeData.instructions;
+              _currentInstructionIndex = 0;
+              if (_instructions.isNotEmpty) {
+                _currentInstruction = _instructions[0]['text'];
+              }
+            });
           } else {
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trajet impossible.'), backgroundColor: Colors.red));
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aucune piste 4x4 trouvée.'), backgroundColor: Colors.red));
           }
         } else {
           if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destination introuvable.'), backgroundColor: Colors.red));
         }
       }
     } catch (e) {
-      print('Erreur Geocoding: $e');
+      debugPrint('Erreur Geocoding: $e');
     }
     setState(() => _loadingRoute = false);
   }
@@ -293,7 +315,7 @@ class _MapScreenState extends State<MapScreen> {
       try {
         await launchUrl(uri);
       } catch (e) {
-        print("Erreur SOS: $e");
+        debugPrint("Erreur SOS: $e");
       }
     }
   }
@@ -445,7 +467,7 @@ class _MapScreenState extends State<MapScreen> {
                       Row(
                         children: [
                           IconButton(icon: const Icon(Icons.route, color: Colors.orange), onPressed: _showRouteDialog),
-                          if (_route.isNotEmpty) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setState(() => _route = [])),
+                          if (_route.isNotEmpty) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setState(() { _route = []; _instructions = []; _currentInstruction = ''; })),
                           IconButton(icon: Icon(_isRecording ? Icons.stop_circle : Icons.fiber_manual_record, color: _isRecording ? Colors.red : Colors.orange), onPressed: _toggleRecording),
                           IconButton(icon: const Icon(Icons.contacts, color: Colors.orange), onPressed: _showContactsDialog),
                           IconButton(icon: const Icon(Icons.cloud, color: Colors.orange), onPressed: _updateWeather),
@@ -453,7 +475,23 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ],
                   ),
-                  if (_weatherDesc.isNotEmpty)
+                  
+                  // --- BANNIÈRE DE GUIDAGE ---
+                  if (_currentInstruction.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(8)),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.directions, color: Colors.white),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text(_currentInstruction, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))),
+                        ],
+                      ),
+                    ),
+
+                  if (_weatherDesc.isNotEmpty && _currentInstruction.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Row(
