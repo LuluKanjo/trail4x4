@@ -18,7 +18,6 @@ void main() {
 
 class Trail4x4App extends StatelessWidget {
   const Trail4x4App({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -27,7 +26,7 @@ class Trail4x4App extends StatelessWidget {
       home: const MapScreen(
         weatherKey: '40ec667fbf278cf67533b2c70d799dd1',
         tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso',
-        graphhopperKey: 'b039ac17-7a0c-4f50-8b3c-1287c47b3001',
+        graphhopperKey: '', 
       ),
     );
   }
@@ -37,14 +36,7 @@ class MapScreen extends StatefulWidget {
   final String weatherKey;
   final String tomtomKey;
   final String graphhopperKey;
-
-  const MapScreen({
-    super.key,
-    required this.weatherKey,
-    required this.tomtomKey,
-    required this.graphhopperKey,
-  });
-
+  const MapScreen({super.key, required this.weatherKey, required this.tomtomKey, required this.graphhopperKey});
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
@@ -54,366 +46,78 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPosition = const LatLng(46.603354, 1.888334);
   double _speed = 0;
   double _altitude = 0;
-  double _distance = 0;
+  double _totalTripDistance = 0;
   LatLng? _lastPosition;
+  bool _followMe = true;
   
   List<String> _sosContacts = [];
   bool _isRecording = false;
   final List<LatLng> _trace = [];
-  List<LatLng> _tracePoints = [];
-  
-  String _weatherDesc = '';
-  double _weatherTemp = 0;
-  double _windSpeed = 0;
   
   late WeatherService _weatherService;
   late POIService _poiService;
   late RoutingService _routingService;
   
   final List<POI> _pois = [];
-  bool _showFuel = false;
-  bool _showWater = false;
-  bool _showCamp = false;
-  bool _loadingPOI = false;
-  
   List<LatLng> _route = [];
-  bool _loadingRoute = false;
-
-  // Variables pour le guidage
-  List<dynamic> _instructions = [];
-  int _currentInstructionIndex = 0;
-  String _currentInstruction = '';
+  double _remainingDist = 0;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
     _weatherService = WeatherService(widget.weatherKey);
     _poiService = POIService(tomtomKey: widget.tomtomKey);
-    _routingService = RoutingService(widget.graphhopperKey);
+    _routingService = RoutingService('');
     _startTracking();
     _loadContacts();
   }
 
   Future<void> _loadContacts() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _sosContacts = prefs.getStringList('sos_contacts') ?? [];
-    });
+    setState(() => _sosContacts = prefs.getStringList('sos_contacts') ?? []);
   }
 
-  Future<void> _saveContacts() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('sos_contacts', _sosContacts);
-  }
-
-  Future<void> _updateWeather() async {
-    final data = await _weatherService.getWeather(
-        _currentPosition.latitude, _currentPosition.longitude);
-    if (data != null) {
-      setState(() {
-        _weatherDesc = data['weather'][0]['description'];
-        _weatherTemp = data['main']['temp'].toDouble();
-        _windSpeed = data['wind']['speed'].toDouble();
-      });
-    }
-  }
-
-  Future<void> _togglePOI(String type) async {
-    bool current = false;
-    if (type == 'fuel') current = _showFuel;
-    if (type == 'water') current = _showWater;
-    if (type == 'camp') current = _showCamp;
-    
-    if (current) {
-      setState(() {
-        _pois.removeWhere((p) => p.type == type);
-        if (type == 'fuel') _showFuel = false;
-        if (type == 'water') _showWater = false;
-        if (type == 'camp') _showCamp = false;
-      });
-      return;
-    }
-    
-    setState(() => _loadingPOI = true);
-    final pois = await _poiService.fetchPOIs(
-        _currentPosition.latitude, _currentPosition.longitude, type);
-    
-    setState(() {
-      _pois.addAll(pois);
-      if (type == 'fuel') _showFuel = true;
-      if (type == 'water') _showWater = true;
-      if (type == 'camp') _showCamp = true;
-      _loadingPOI = false;
-    });
-  }
-
-  Future<void> _startTracking() async {
-    LocationPermission permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied) return;
-    
-    _updateWeather();
-    
-    Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
-      ),
-    ).listen((Position position) {
+  void _startTracking() async {
+    await Geolocator.requestPermission();
+    Geolocator.getPositionStream(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 3))
+    .listen((Position pos) {
       if (!mounted) return;
       setState(() {
-        _currentPosition = LatLng(position.latitude, position.longitude);
-        _speed = position.speed * 3.6;
-        _altitude = position.altitude;
-        
+        _currentPosition = LatLng(pos.latitude, pos.longitude);
+        _speed = pos.speed * 3.6;
+        _altitude = pos.altitude;
         if (_lastPosition != null) {
-          final Distance calculator = const Distance();
-          _distance += calculator.as(LengthUnit.Kilometer, _lastPosition!, _currentPosition);
+          _totalTripDistance += const Distance().as(LengthUnit.Kilometer, _lastPosition!, _currentPosition);
         }
         _lastPosition = _currentPosition;
+        if (_isRecording) _trace.add(_currentPosition);
         
-        if (_isRecording) {
-          _tracePoints.add(_currentPosition);
-          _trace.add(_currentPosition);
-        }
-
-        // --- Logique de Guidage (Turn by Turn) ---
-        if (_instructions.isNotEmpty && _route.isNotEmpty && _currentInstructionIndex < _instructions.length) {
-          final instruction = _instructions[_currentInstructionIndex];
-          final endPointIndex = instruction['interval'][1];
-          
-          if (endPointIndex < _route.length) {
-            final endPoint = _route[endPointIndex];
-            final Distance calculator = const Distance();
-            final distToTurn = calculator.as(LengthUnit.Meter, _currentPosition, endPoint);
-            
-            // Si on est à moins de 30m de l'intersection, on passe à l'instruction suivante
-            if (distToTurn < 30) {
-              _currentInstructionIndex++;
-              if (_currentInstructionIndex < _instructions.length) {
-                _currentInstruction = _instructions[_currentInstructionIndex]['text'];
-              } else {
-                _currentInstruction = 'Vous êtes arrivé !';
-              }
-            }
-          }
+        if (_route.isNotEmpty) {
+          _remainingDist = const Distance().as(LengthUnit.Meter, _currentPosition, _route.last);
         }
       });
-      _mapController.move(_currentPosition, _mapController.camera.zoom);
+      if (_followMe) _mapController.move(_currentPosition, _mapController.camera.zoom);
     });
   }
 
-  void _toggleRecording() async {
-    if (_isRecording) {
-      await _saveGPX();
-      setState(() => _isRecording = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trace sauvegardée !'), backgroundColor: Colors.green));
-    } else {
-      setState(() {
-        _isRecording = true;
-        _tracePoints = [];
-        _distance = 0;
-      });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enregistrement démarré'), backgroundColor: Colors.orange));
-    }
-  }
-
-  Future<void> _saveGPX() async {
-    if (_tracePoints.isEmpty) return;
+  Future<void> _calculateRoute(String destName) async {
+    setState(() => _loading = true);
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final now = DateTime.now();
-      final filename = 'trace_${now.year}${now.month}${now.day}_${now.hour}${now.minute}.gpx';
-      final file = File('${dir.path}/$filename');
-      
-      final buffer = StringBuffer();
-      buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
-      buffer.writeln('<gpx version="1.1" creator="Trail4x4">');
-      buffer.writeln('<trk><name>Trail 4x4</name><trkseg>');
-      for (final point in _tracePoints) {
-        buffer.writeln('<trkpt lat="${point.latitude}" lon="${point.longitude}"></trkpt>');
-      }
-      buffer.writeln('</trkseg></trk></gpx>');
-      
-      await file.writeAsString(buffer.toString());
-    } catch (e) {
-      debugPrint("Erreur écriture GPX: $e");
-    }
-  }
-
-  Future<void> _calculateRoute(String destination) async {
-    setState(() => _loadingRoute = true);
-    try {
-      final url = 'https://nominatim.openstreetmap.org/search?q=$destination&format=json&limit=1';
-      final response = await http.get(Uri.parse(url), headers: {'User-Agent': 'Trail4x4App'});
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data.isNotEmpty) {
-          final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-          final routeData = await _routingService.getOffRoadRoute(_currentPosition, dest);
-          
-          if (routeData != null && routeData.points.isNotEmpty) {
-            setState(() {
-              _route = routeData.points;
-              _instructions = routeData.instructions;
-              _currentInstructionIndex = 0;
-              if (_instructions.isNotEmpty) {
-                _currentInstruction = _instructions[0]['text'];
-              }
-            });
-          } else {
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aucune piste 4x4 trouvée.'), backgroundColor: Colors.red));
-          }
-        } else {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destination introuvable.'), backgroundColor: Colors.red));
+      final res = await http.get(Uri.parse('https://nominatim.openstreetmap.org/search?q=$destName&format=json&limit=1'));
+      final data = json.decode(res.body);
+      if (data.isNotEmpty) {
+        final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+        final routeData = await _routingService.getOffRoadRoute(_currentPosition, dest);
+        if (routeData != null) {
+          setState(() {
+            _route = routeData.points;
+            _remainingDist = routeData.distance;
+          });
         }
       }
-    } catch (e) {
-      debugPrint('Erreur Geocoding: $e');
-    }
-    setState(() => _loadingRoute = false);
-  }
-
-  void _showRouteDialog() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Destination'),
-        backgroundColor: Colors.brown[900],
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: 'Ex: Millau, Aveyron'),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler', style: TextStyle(color: Colors.white70)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (controller.text.isNotEmpty) _calculateRoute(controller.text);
-            },
-            child: const Text('Calculer', style: TextStyle(color: Colors.orange)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _sendSOS() async {
-    if (_sosContacts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aucun contact SOS configuré.'), backgroundColor: Colors.red));
-      return;
-    }
-    final message = 'URGENT - besoin aide ! Position : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
-    
-    for (final contact in _sosContacts) {
-      final uri = Uri(scheme: 'sms', path: contact, queryParameters: {'body': message});
-      try {
-        await launchUrl(uri);
-      } catch (e) {
-        debugPrint("Erreur SOS: $e");
-      }
-    }
-  }
-
-  void _showContactsDialog() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Contacts SOS'),
-          backgroundColor: Colors.brown[900],
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ..._sosContacts.map((c) => ListTile(
-                    title: Text(c),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () {
-                        setDialogState(() => _sosContacts.remove(c));
-                        setState(() {});
-                        _saveContacts();
-                      },
-                    ),
-                  )),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(hintText: '+33612345678'),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.add, color: Colors.orange),
-                    onPressed: () {
-                      if (controller.text.isNotEmpty) {
-                        setDialogState(() => _sosContacts.add(controller.text));
-                        setState(() {});
-                        _saveContacts();
-                        controller.clear();
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fermer', style: TextStyle(color: Colors.orange)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _poiMarker(POI poi) {
-    IconData icon;
-    Color color;
-    switch (poi.type) {
-      case 'fuel': icon = Icons.local_gas_station; color = Colors.yellow; break;
-      case 'water': icon = Icons.water_drop; color = Colors.blue; break;
-      case 'camp': icon = Icons.cabin; color = Colors.green; break;
-      default: icon = Icons.place; color = Colors.white;
-    }
-    return Icon(icon, color: color, size: 28);
-  }
-
-  Widget _poiButton(String label, String type, bool active) {
-    return GestureDetector(
-      onTap: () => _togglePOI(type),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: active ? Colors.orange.withAlpha(80) : Colors.white.withAlpha(25),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: active ? Colors.orange : Colors.white30),
-        ),
-        child: Text(label, style: TextStyle(color: active ? Colors.orange : Colors.white70, fontSize: 12)),
-      ),
-    );
-  }
-
-  Widget _buildStat(String label, String value, IconData icon) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: Colors.orange, size: 20),
-        const SizedBox(height: 4),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)),
-      ],
-    );
+    } catch (e) { debugPrint('$e'); }
+    setState(() => _loading = false);
   }
 
   @override
@@ -423,132 +127,54 @@ class _MapScreenState extends State<MapScreen> {
         children: [
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _currentPosition,
-              initialZoom: 15,
-            ),
+            options: MapOptions(initialCenter: _currentPosition, initialZoom: 14, onPositionChanged: (pos, hasGesture) {
+              if (hasGesture) setState(() => _followMe = false);
+            }),
             children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.trail4x4.app',
-              ),
-              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.blue, strokeWidth: 5)]),
+              TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.blueAccent, strokeWidth: 6)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
-              MarkerLayer(
-                markers: [
-                  ..._pois.map((poi) => Marker(
-                        point: poi.position,
-                        width: 30, height: 30,
-                        child: GestureDetector(
-                          onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(poi.name), duration: const Duration(seconds: 2))),
-                          child: _poiMarker(poi),
-                        ),
-                      )),
-                  Marker(
-                    point: _currentPosition,
-                    width: 40, height: 40,
-                    child: const Icon(Icons.navigation, color: Colors.orange, size: 40),
-                  ),
-                ],
-              ),
+              MarkerLayer(markers: [
+                Marker(point: _currentPosition, width: 40, height: 40, child: const Icon(Icons.navigation, color: Colors.orange, size: 40)),
+              ]),
             ],
           ),
-          Positioned(
-            top: 0, left: 0, right: 0,
-            child: Container(
-              color: Colors.brown[900]!.withAlpha(230),
-              padding: const EdgeInsets.fromLTRB(16, 40, 16, 8),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Trail 4x4', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      Row(
-                        children: [
-                          IconButton(icon: const Icon(Icons.route, color: Colors.orange), onPressed: _showRouteDialog),
-                          if (_route.isNotEmpty) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setState(() { _route = []; _instructions = []; _currentInstruction = ''; })),
-                          IconButton(icon: Icon(_isRecording ? Icons.stop_circle : Icons.fiber_manual_record, color: _isRecording ? Colors.red : Colors.orange), onPressed: _toggleRecording),
-                          IconButton(icon: const Icon(Icons.contacts, color: Colors.orange), onPressed: _showContactsDialog),
-                          IconButton(icon: const Icon(Icons.cloud, color: Colors.orange), onPressed: _updateWeather),
-                        ],
-                      ),
-                    ],
-                  ),
-                  
-                  // --- BANNIÈRE DE GUIDAGE ---
-                  if (_currentInstruction.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(color: Colors.blue[800], borderRadius: BorderRadius.circular(8)),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.directions, color: Colors.white),
-                          const SizedBox(width: 12),
-                          Expanded(child: Text(_currentInstruction, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))),
-                        ],
-                      ),
-                    ),
-
-                  if (_weatherDesc.isNotEmpty && _currentInstruction.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          Text('${_weatherTemp.toStringAsFixed(0)}°C', style: const TextStyle(color: Colors.white, fontSize: 13)),
-                          Text('${_windSpeed.toStringAsFixed(0)} m/s', style: const TextStyle(color: Colors.white, fontSize: 13)),
-                          Text(_weatherDesc, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _poiButton('Essence', 'fuel', _showFuel),
-                      _poiButton('Eau', 'water', _showWater),
-                      _poiButton('Bivouac', 'camp', _showCamp),
-                    ],
-                  ),
-                ],
-              ),
+          Positioned(top: 40, left: 15, right: 15, child: Column(children: [
+            if (_route.isNotEmpty) Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.blue[900]!.withOpacity(0.8), borderRadius: BorderRadius.circular(10)),
+              child: Row(children: [
+                const Icon(Icons.flag, color: Colors.white),
+                const SizedBox(width: 10),
+                Text("Destination : ${(_remainingDist/1000).toStringAsFixed(1)} km", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ]),
             ),
-          ),
-          if (_loadingPOI || _loadingRoute) const Center(child: CircularProgressIndicator()),
-          Positioned(
-            right: 16, bottom: 140,
-            child: FloatingActionButton(
-              onPressed: () => _mapController.move(_currentPosition, 15),
-              backgroundColor: Colors.brown[800],
-              child: const Icon(Icons.gps_fixed),
-            ),
-          ),
-          Positioned(
-            left: 16, bottom: 140,
-            child: FloatingActionButton(
-              onPressed: _sendSOS,
-              backgroundColor: Colors.red[800],
-              child: const Text('SOS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-            ),
-          ),
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: Container(
-              color: Colors.brown[900]!.withAlpha(230),
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildStat('Vitesse', '${_speed.toStringAsFixed(0)} km/h', Icons.speed),
-                  _buildStat('Altitude', '${_altitude.toStringAsFixed(0)} m', Icons.terrain),
-                  _buildStat('Distance', '${_distance.toStringAsFixed(2)} km', Icons.straighten),
-                ],
-              ),
-            ),
-          ),
+          ])),
+          Positioned(bottom: 120, right: 15, child: Column(children: [
+            FloatingActionButton(heroTag: "gps", onPressed: () => setState(() => _followMe = true), backgroundColor: _followMe ? Colors.orange : Colors.grey[800], child: const Icon(Icons.gps_fixed)),
+            const SizedBox(height: 10),
+            FloatingActionButton(heroTag: "route", onPressed: () {
+              final controller = TextEditingController();
+              showDialog(context: context, builder: (ctx) => AlertDialog(
+                title: const Text("Destination Off-Road"),
+                content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Village, Lieu-dit...")),
+                actions: [TextButton(onPressed: () => _calculateRoute(controller.text).then((_) => Navigator.pop(ctx)), child: const Text("Tracer"))],
+              ));
+            }, child: const Icon(Icons.map)),
+          ])),
+          Positioned(bottom: 0, left: 0, right: 0, child: Container(
+            color: Colors.black87,
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+              _stat("Vitesse", "${_speed.toStringAsFixed(0)} km/h"),
+              _stat("Altitude", "${_altitude.toStringAsFixed(0)} m"),
+              _stat("Trip", "${_totalTripDistance.toStringAsFixed(1)} km"),
+            ]),
+          )),
+          if (_loading) const Center(child: CircularProgressIndicator()),
         ],
       ),
     );
   }
+  Widget _stat(String label, String val) => Column(children: [Text(val, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.orange)), Text(label, style: const TextStyle(color: Colors.grey))]);
 }
