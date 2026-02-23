@@ -12,8 +12,8 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // Profil car-test ou car-eco pour BRouter
-    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=car-eco&alternativeidx=0&format=geojson';
+    // Profil 'trekking' : le secret des raideurs pour trouver les pistes
+    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=trekking&alternativeidx=0&format=geojson';
     
     try {
       final response = await http.get(Uri.parse(url));
@@ -22,13 +22,13 @@ class RoutingService {
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
         final double dist = feature['properties']['track-length'].toDouble();
-        
         final points = coords.map((p) => LatLng(p[1], p[0])).toList();
         return RouteData(points, dist);
+      } else {
+        throw "Serveur BRouter : Erreur ${response.statusCode}";
       }
     } catch (e) {
-      print('Erreur BRouter: $e');
+      throw "Erreur Route : $e";
     }
-    return null;
   }
 }
