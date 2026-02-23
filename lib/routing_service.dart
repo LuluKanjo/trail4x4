@@ -12,11 +12,11 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // Profil 'trekking' : le secret des raideurs pour trouver les pistes
+    // Utilisation de l'API BRouter communautaire
     final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=trekking&alternativeidx=0&format=geojson';
     
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final feature = data['features'][0];
@@ -25,10 +25,10 @@ class RoutingService {
         final points = coords.map((p) => LatLng(p[1], p[0])).toList();
         return RouteData(points, dist);
       } else {
-        throw "Serveur BRouter : Erreur ${response.statusCode}";
+        throw "Serveur BRouter Erreur: ${response.statusCode}";
       }
     } catch (e) {
-      throw "Erreur Route : $e";
+      throw "BRouter indisponible: $e";
     }
   }
 }

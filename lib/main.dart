@@ -42,14 +42,12 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPosition = const LatLng(46.603354, 1.888334);
   double _speed = 0, _altitude = 0, _totalDist = 0;
   LatLng? _lastPos;
-  bool _followMe = true, _isSatellite = false, _isRecording = false;
+  bool _followMe = true, _isSatellite = false, _loading = false;
   
   String _weatherText = "Météo...";
   final List<POI> _pois = [];
-  final List<LatLng> _trace = [];
   List<LatLng> _route = [];
   double _remainingDist = 0;
-  bool _loading = false;
 
   late WeatherService _weatherService;
   late POIService _poiService;
@@ -65,8 +63,19 @@ class _MapScreenState extends State<MapScreen> {
     _updateWeather();
   }
 
+  void _showLog(String m, {bool err = false}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(m), 
+      backgroundColor: err ? Colors.red : Colors.blueGrey[800],
+      duration: const Duration(seconds: 3),
+    ));
+  }
+
   void _startTracking() async {
-    await Geolocator.requestPermission();
+    LocationPermission p = await Geolocator.checkPermission();
+    if (p == LocationPermission.denied) p = await Geolocator.requestPermission();
+    
     Geolocator.getPositionStream(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 2))
     .listen((pos) {
       if (!mounted) return;
@@ -74,64 +83,61 @@ class _MapScreenState extends State<MapScreen> {
         _currentPosition = LatLng(pos.latitude, pos.longitude);
         _speed = pos.speed * 3.6;
         _altitude = pos.altitude;
-        if (_lastPos != null) {
-          _totalDist += const Distance().as(LengthUnit.Kilometer, _lastPos!, _currentPosition);
-        }
+        _lastPos ??= _currentPosition;
+        _totalDist += const Distance().as(LengthUnit.Kilometer, _lastPos!, _currentPosition);
         _lastPos = _currentPosition;
-        if (_isRecording) _trace.add(_currentPosition);
-        if (_route.isNotEmpty) {
-          _remainingDist = const Distance().as(LengthUnit.Meter, _currentPosition, _route.last);
-        }
       });
       if (_followMe) _mapController.move(_currentPosition, _mapController.camera.zoom);
     });
   }
 
   Future<void> _updateWeather() async {
-    final data = await _weatherService.getWeather(_currentPosition.latitude, _currentPosition.longitude);
-    if (data != null) {
-      setState(() => _weatherText = "${data['main']['temp'].toStringAsFixed(0)}°C | ${data['weather'][0]['description']}");
-    }
+    try {
+      final data = await _weatherService.getWeather(_currentPosition.latitude, _currentPosition.longitude);
+      if (data != null) setState(() => _weatherText = "${data['main']['temp'].toStringAsFixed(0)}°C | ${data['weather'][0]['description']}");
+    } catch (e) { debugPrint("Weather error"); }
   }
 
   Future<void> _togglePOI(String type) async {
+    _showLog("Recherche $type à proximité...");
     setState(() => _loading = true);
-    final results = await _poiService.fetchPOIs(_currentPosition.latitude, _currentPosition.longitude, type);
-    setState(() { _pois.addAll(results); _loading = false; });
-  }
-
-  Future<void> _sendSOS() async {
-    final prefs = await SharedPreferences.getInstance();
-    final contacts = prefs.getStringList('sos_contacts') ?? [];
-    for (var c in contacts) {
-      final uri = Uri.parse('sms:$c?body=URGENCE 4x4! Ma position: https://www.google.com/maps?q=${_currentPosition.latitude},${_currentPosition.longitude}');
-      if (await canLaunchUrl(uri)) await launchUrl(uri);
+    try {
+      final results = await _poiService.fetchPOIs(_currentPosition.latitude, _currentPosition.longitude, type);
+      setState(() { _pois.addAll(results); _loading = false; });
+      _showLog("${results.length} points trouvés !");
+    } catch (e) {
+      setState(() => _loading = false);
+      _showLog("Erreur POI : $e", err: true);
     }
   }
 
-  Future<void> _saveGPX() async {
-    if (_trace.isEmpty) return;
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/trace_${DateTime.now().millisecondsSinceEpoch}.gpx');
-    final buffer = StringBuffer()..writeln('<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1"><trk><trkseg>');
-    for (final p in _trace) { buffer.writeln('<trkpt lat="${p.latitude}" lon="${p.longitude}"></trkpt>'); }
-    buffer.writeln('</trkseg></trk></gpx>');
-    await file.writeAsString(buffer.toString());
-  }
-
   Future<void> _calculateRoute(String destName) async {
+    if (destName.isEmpty) return;
+    _showLog("Recherche du village : $destName...");
     setState(() => _loading = true);
     try {
-      final res = await http.get(Uri.parse('https://nominatim.openstreetmap.org/search?q=$destName&format=json&limit=1'), headers: {'User-Agent': 'Trail4x4-Lulu'});
+      final res = await http.get(
+        Uri.parse('https://nominatim.openstreetmap.org/search?q=$destName&format=json&limit=1'),
+        headers: {'User-Agent': 'Trail4x4-Lulu-Diagnostic'}
+      ).timeout(const Duration(seconds: 10));
+      
       final data = json.decode(res.body);
-      if (data.isNotEmpty) {
+      if (data.isEmpty) {
+        _showLog("Village non trouvé sur la carte", err: true);
+      } else {
         final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+        _showLog("Calcul de la trace Off-Road...");
         final routeData = await _routingService.getOffRoadRoute(_currentPosition, dest);
+        
         if (routeData != null) {
           setState(() { _route = routeData.points; _remainingDist = routeData.distance; _followMe = true; });
+          _mapController.fitCamera(CameraFit.coordinates(coordinates: [_currentPosition, dest], padding: const EdgeInsets.all(50)));
+          _showLog("Trace générée avec succès !");
         }
       }
-    } catch (e) { debugPrint('$e'); }
+    } catch (e) {
+      _showLog("Erreur calcul : $e", err: true);
+    }
     setState(() => _loading = false);
   }
 
@@ -151,35 +157,20 @@ class _MapScreenState extends State<MapScreen> {
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyan, strokeWidth: 6)]),
-              if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
                 ..._pois.map((p) => Marker(point: p.position, child: const Icon(Icons.place, color: Colors.yellow, size: 30))),
                 Marker(point: _currentPosition, width: 50, height: 50, child: const Icon(Icons.navigation, color: Colors.orange, size: 45)),
               ]),
             ],
           ),
+          // Interface
           Positioned(top: 50, left: 15, right: 15, child: Column(children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(10)),
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.cloud, size: 18, color: Colors.cyan),
-                const SizedBox(width: 8),
-                Text(_weatherText, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-              ]),
-            ),
+            Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10)), child: Text(_weatherText)),
             if (_route.isNotEmpty) const SizedBox(height: 10),
-            if (_route.isNotEmpty) Container(
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(color: Colors.cyan.withValues(alpha: 0.8), borderRadius: BorderRadius.circular(12)),
-              child: Text("${(_remainingDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
-            ),
+            if (_route.isNotEmpty) Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Colors.cyan[800], borderRadius: BorderRadius.circular(12)), child: Text("${(_remainingDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
           ])),
+          // Boutons
           Positioned(bottom: 110, right: 15, child: Column(children: [
-            FloatingActionButton(heroTag: "reset", mini: true, onPressed: () => setState(() { _trace.clear(); _route = []; _remainingDist = 0; }), backgroundColor: Colors.black87, child: const Icon(Icons.delete_sweep, color: Colors.white)),
-            const SizedBox(height: 12),
-            FloatingActionButton(heroTag: "rec", mini: true, onPressed: () { setState(() => _isRecording = !_isRecording); if(!_isRecording) _saveGPX(); }, backgroundColor: _isRecording ? Colors.red : Colors.black87, child: Icon(_isRecording ? Icons.stop : Icons.fiber_manual_record)),
-            const SizedBox(height: 12),
             FloatingActionButton(heroTag: "sat", mini: true, onPressed: () => setState(() => _isSatellite = !_isSatellite), backgroundColor: Colors.black87, child: Icon(_isSatellite ? Icons.map : Icons.satellite_alt)),
             const SizedBox(height: 12),
             FloatingActionButton(heroTag: "gps", onPressed: () => setState(() => _followMe = true), backgroundColor: _followMe ? Colors.orange : Colors.grey[900], child: const Icon(Icons.gps_fixed)),
@@ -188,38 +179,27 @@ class _MapScreenState extends State<MapScreen> {
               final c = TextEditingController();
               showDialog(context: context, builder: (ctx) => AlertDialog(
                 title: const Text("Destination"),
-                content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ville")),
-                actions: [TextButton(onPressed: () { _calculateRoute(c.text); Navigator.pop(ctx); }, child: const Text("GO"))],
+                content: TextField(controller: c, decoration: const InputDecoration(hintText: "Nom du village")),
+                actions: [TextButton(onPressed: () { Navigator.pop(ctx); _calculateRoute(c.text); }, child: const Text("LANCER"))],
               ));
             }, backgroundColor: Colors.cyan[700], child: const Icon(Icons.search)),
           ])),
-          Positioned(bottom: 110, left: 15, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            FloatingActionButton(heroTag: "sos", mini: true, onPressed: _sendSOS, backgroundColor: Colors.red[900], child: const Text("SOS")),
-            const SizedBox(height: 12),
+          Positioned(bottom: 110, left: 15, child: Column(children: [
             _poiBtn("Essence", "fuel", Icons.local_gas_station),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             _poiBtn("Bivouac", "camp", Icons.cabin),
           ])),
-          Positioned(bottom: 0, left: 0, right: 0, child: Container(
-            height: 90, color: Colors.black,
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _dash("VITESSE", _speed.toStringAsFixed(0), "km/h"),
-              _dash("ALTITUDE", _altitude.toStringAsFixed(0), "m"),
-              _dash("TRIP", _totalDist.toStringAsFixed(1), "km"),
-            ]),
-          )),
+          // Stats
+          Positioned(bottom: 0, left: 0, right: 0, child: Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+            _dash("KM/H", _speed.toStringAsFixed(0)),
+            _dash("ALTITUDE", _altitude.toStringAsFixed(0)),
+            _dash("TRIP", _totalDist.toStringAsFixed(1)),
+          ]))),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyan)),
         ],
       ),
     );
   }
-  Widget _dash(String l, String v, String u) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    Text(v, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.orange)),
-    Text("$l ($u)", style: const TextStyle(fontSize: 10, color: Colors.grey)),
-  ]);
-  Widget _poiBtn(String l, String t, IconData i) => ElevatedButton.icon(
-    onPressed: () => _togglePOI(t),
-    icon: Icon(i, size: 16), label: Text(l, style: const TextStyle(fontSize: 12)),
-    style: ElevatedButton.styleFrom(backgroundColor: Colors.black.withValues(alpha: 0.6)),
-  );
+  Widget _dash(String l, String v) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.orange)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
+  Widget _poiBtn(String l, String t, IconData i) => FloatingActionButton(heroTag: t, mini: true, onPressed: () => _togglePOI(t), backgroundColor: Colors.black87, child: Icon(i, size: 20));
 }
