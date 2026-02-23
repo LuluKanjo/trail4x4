@@ -16,7 +16,6 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
     final url = 'https://graphhopper.com/api/1/route?key=$apiKey';
     
-    // Le secret est ici : on force la recherche de terre et on fuit l'asphalte
     final body = json.encode({
       "points": [
         [start.longitude, start.latitude],
@@ -27,12 +26,17 @@ class RoutingService {
       "instructions": true,
       "elevation": false,
       "points_encoded": false,
-      "ch.disable": true, // Obligatoire pour utiliser le modèle sur mesure
+      "ch.disable": true, // Désactive le cache rapide pour utiliser notre recette
       "custom_model": {
-        "distance_influence": 70,
+        // Autorise de plus longs détours géographiques pour trouver de la piste (défaut: 70)
+        "distance_influence": 40,
         "priority": [
-          { "if": "road_class == MOTORWAY || road_class == TRUNK", "multiply_by": 0.0 },
-          { "if": "surface == ASPHALT || surface == PAVED || surface == CONCRETE", "multiply_by": 0.1 }
+          // On fuit les autoroutes et voies rapides
+          { "if": "road_class == MOTORWAY || road_class == TRUNK", "multiply_by": 0.05 },
+          // L'asphalte reste possible pour les liaisons, mais fortement pénalisé face à la terre
+          { "if": "surface == ASPHALT || surface == PAVED || surface == CONCRETE", "multiply_by": 0.3 },
+          // On traverse moins les lotissements et zones résidentielles
+          { "if": "road_class == RESIDENTIAL", "multiply_by": 0.6 }
         ]
       }
     });
@@ -54,10 +58,10 @@ class RoutingService {
           return RouteData(points, instructions);
         }
       } else {
-        print('Erreur API GraphHopper: ${response.statusCode} - ${response.body}');
+        return RouteData([start, dest], [{'text': 'ERREUR API: ${response.statusCode} - ${response.body}', 'interval': [0, 1]}]);
       }
     } catch (e) {
-      print('Erreur Routing: $e');
+      return RouteData([start, dest], [{'text': 'CRASH INTERNE: $e', 'interval': [0, 1]}]);
     }
     return null;
   }
