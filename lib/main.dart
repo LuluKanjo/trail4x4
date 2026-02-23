@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'weather_service.dart';
+import 'poi_service.dart';
 
 void main() {
   runApp(const Trail4x4App());
@@ -48,6 +49,12 @@ class _MapScreenState extends State<MapScreen> {
   double _weatherTemp = 0;
   double _windSpeed = 0;
   late WeatherService _weatherService;
+  final POIService _poiService = POIService();
+  List<POI> _pois = [];
+  bool _showFuel = false;
+  bool _showWater = false;
+  bool _showCamp = false;
+  bool _loadingPOI = false;
 
   @override
   void initState() {
@@ -81,12 +88,44 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Future<void> _togglePOI(String type) async {
+    bool current = false;
+    if (type == 'fuel') current = _showFuel;
+    if (type == 'water') current = _showWater;
+    if (type == 'camp') current = _showCamp;
+    if (current) {
+      setState(() {
+        _pois.removeWhere((p) => p.type == type);
+        if (type == 'fuel') _showFuel = false;
+        if (type == 'water') _showWater = false;
+        if (type == 'camp') _showCamp = false;
+      });
+      return;
+    }
+    setState(() => _loadingPOI = true);
+    final pois = await _poiService.fetchPOIs(
+        _currentPosition.latitude, _currentPosition.longitude, type);
+    setState(() {
+      _pois.addAll(pois);
+      if (type == 'fuel') _showFuel = true;
+      if (type == 'water') _showWater = true;
+      if (type == 'camp') _showCamp = true;
+      _loadingPOI = false;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${pois.length} points trouves !'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   Future<void> _startTracking() async {
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) return;
-
     _updateWeather();
-
     Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -119,20 +158,26 @@ class _MapScreenState extends State<MapScreen> {
     if (_isRecording) {
       await _saveGPX();
       setState(() => _isRecording = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Trace enregistrée !'),
-            backgroundColor: Colors.green),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Trace enregistree !'),
+              backgroundColor: Colors.green),
+        );
+      }
     } else {
       setState(() {
         _isRecording = true;
         _tracePoints = [];
         _distance = 0;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enregistrement démarré !'),
-            backgroundColor: Colors.orange),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Enregistrement demarre !'),
+              backgroundColor: Colors.orange),
+        );
+      }
     }
   }
 
@@ -158,13 +203,14 @@ class _MapScreenState extends State<MapScreen> {
   void _sendSOS() async {
     if (_sosContacts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ajoutez des contacts SOS.'),
+        const SnackBar(
+            content: Text('Ajoutez des contacts SOS.'),
             backgroundColor: Colors.red),
       );
       return;
     }
     final message =
-        'URGENT - J\'ai besoin d\'aide ! Ma position GPS : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
+        'URGENT - besoin aide ! Position : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
     for (final contact in _sosContacts) {
       final uri = Uri(
         scheme: 'sms',
@@ -203,8 +249,8 @@ class _MapScreenState extends State<MapScreen> {
                     child: TextField(
                       controller: controller,
                       keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                          hintText: '+33612345678'),
+                      decoration:
+                          const InputDecoration(hintText: '+33612345678'),
                     ),
                   ),
                   IconButton(
@@ -232,6 +278,68 @@ class _MapScreenState extends State<MapScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _poiMarker(POI poi) {
+    IconData icon;
+    Color color;
+    switch (poi.type) {
+      case 'fuel':
+        icon = Icons.local_gas_station;
+        color = Colors.yellow;
+        break;
+      case 'water':
+        icon = Icons.water_drop;
+        color = Colors.blue;
+        break;
+      case 'camp':
+        icon = Icons.cabin;
+        color = Colors.green;
+        break;
+      default:
+        icon = Icons.place;
+        color = Colors.white;
+    }
+    return Icon(icon, color: color, size: 28);
+  }
+
+  Widget _poiButton(String label, String type, bool active) {
+    return GestureDetector(
+      onTap: () => _togglePOI(type),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: active
+              ? Colors.orange.withValues(alpha: 0.3)
+              : Colors.white.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: active ? Colors.orange : Colors.white30,
+          ),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: active ? Colors.orange : Colors.white70,
+                fontSize: 12)),
+      ),
+    );
+  }
+
+  Widget _buildStat(String label, String value, IconData icon) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: Colors.orange, size: 20),
+        const SizedBox(height: 4),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold)),
+        Text(label,
+            style: const TextStyle(color: Colors.grey, fontSize: 11)),
+      ],
     );
   }
 
@@ -264,6 +372,22 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               MarkerLayer(
                 markers: [
+                  ..._pois.map((poi) => Marker(
+                        point: poi.position,
+                        width: 30,
+                        height: 30,
+                        child: GestureDetector(
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(poi.name),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          child: _poiMarker(poi),
+                        ),
+                      )),
                   Marker(
                     point: _currentPosition,
                     width: 40,
@@ -323,10 +447,10 @@ class _MapScreenState extends State<MapScreen> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          Text('🌡️ ${_weatherTemp.toStringAsFixed(0)}°C',
+                          Text('${_weatherTemp.toStringAsFixed(0)}C',
                               style: const TextStyle(
                                   color: Colors.white, fontSize: 13)),
-                          Text('💨 ${_windSpeed.toStringAsFixed(0)} m/s',
+                          Text('${_windSpeed.toStringAsFixed(0)} m/s',
                               style: const TextStyle(
                                   color: Colors.white, fontSize: 13)),
                           Text(_weatherDesc,
@@ -335,16 +459,25 @@ class _MapScreenState extends State<MapScreen> {
                         ],
                       ),
                     ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _poiButton('Essence', 'fuel', _showFuel),
+                      _poiButton('Eau', 'water', _showWater),
+                      _poiButton('Bivouac', 'camp', _showCamp),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
+          if (_loadingPOI)
+            const Center(child: CircularProgressIndicator()),
           Positioned(
             right: 16,
             bottom: 140,
             child: FloatingActionButton(
-              onPressed: () =>
-                  _mapController.move(_currentPosition, 15),
+              onPressed: () => _mapController.move(_currentPosition, 15),
               backgroundColor: Colors.brown[800],
               child: const Icon(Icons.gps_fixed),
             ),
@@ -383,23 +516,6 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildStat(String label, String value, IconData icon) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: Colors.orange, size: 20),
-        const SizedBox(height: 4),
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold)),
-        Text(label,
-            style: const TextStyle(color: Colors.grey, fontSize: 11)),
-      ],
     );
   }
 }
