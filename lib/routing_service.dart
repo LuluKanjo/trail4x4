@@ -14,9 +14,8 @@ class RoutingService {
   RoutingService(this.apiKey);
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // LE HACK 4x4 : On utilise le profil Mountain Bike (VTT) !
-    // Il est gratuit et sa priorité absolue est de fuir le goudron pour trouver de la terre.
-    final url = 'https://graphhopper.com/api/1/route?point=${start.latitude},${start.longitude}&point=${dest.latitude},${dest.longitude}&profile=mtb&key=$apiKey&instructions=true&points_encoded=false';
+    // Utilisation du profil "bike" (activé par défaut) pour forcer le hors-piste
+    final url = 'https://graphhopper.com/api/1/route?point=${start.latitude},${start.longitude}&point=${dest.latitude},${dest.longitude}&profile=bike&key=$apiKey&instructions=true&points_encoded=false';
 
     try {
       final response = await http.get(Uri.parse(url));
@@ -31,7 +30,8 @@ class RoutingService {
           return RouteData(points, instructions);
         }
       } else {
-        return RouteData([start, dest], [{'text': 'ERREUR API: ${response.statusCode}', 'interval': [0, 1]}]);
+        // En cas d'erreur, on capture la réponse exacte de GraphHopper
+        return RouteData([start, dest], [{'text': 'ERREUR ${response.statusCode}: ${response.body}', 'interval': [0, 1]}]);
       }
     } catch (e) {
       return RouteData([start, dest], [{'text': 'CRASH INTERNE: $e', 'interval': [0, 1]}]);
