@@ -11,7 +11,8 @@ class RoutingService {
       final url = 'https://graphhopper.com/api/1/route'
           '?point=${start.latitude},${start.longitude}'
           '&point=${end.latitude},${end.longitude}'
-          '&vehicle=car_offroad'
+          '&vehicle=car'
+          '&weighting=short_fastest'
           '&locale=fr'
           '&points_encoded=false'
           '&key=$apiKey';
@@ -23,10 +24,11 @@ class RoutingService {
         return coords
             .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
             .toList();
+      } else {
+        return null;
       }
     } catch (e) {
       return null;
     }
-    return null;
   }
 }
