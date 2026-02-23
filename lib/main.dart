@@ -4,6 +4,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   runApp(const Trail4x4App());
@@ -37,6 +39,9 @@ class _MapScreenState extends State<MapScreen> {
   double _distance = 0;
   LatLng? _lastPosition;
   List<String> _sosContacts = [];
+  bool _isRecording = false;
+  List<LatLng> _trace = [];
+  List<LatLng> _tracePoints = [];
 
   @override
   void initState() {
@@ -80,25 +85,74 @@ class _MapScreenState extends State<MapScreen> {
           );
         }
         _lastPosition = _currentPosition;
+        if (_isRecording) {
+          _tracePoints.add(_currentPosition);
+          _trace.add(_currentPosition);
+        }
       });
       _mapController.move(_currentPosition, _mapController.camera.zoom);
     });
+  }
+
+  void _toggleRecording() async {
+    if (_isRecording) {
+      await _saveGPX();
+      setState(() {
+        _isRecording = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Trace enregistrée !'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      setState(() {
+        _isRecording = true;
+        _tracePoints = [];
+        _distance = 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enregistrement de la trace démarré !'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
+
+  Future<void> _saveGPX() async {
+    if (_tracePoints.isEmpty) return;
+    final dir = await getApplicationDocumentsDirectory();
+    final now = DateTime.now();
+    final filename =
+        'trace_${now.year}${now.month}${now.day}_${now.hour}${now.minute}.gpx';
+    final file = File('${dir.path}/$filename');
+
+    final buffer = StringBuffer();
+    buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+    buffer.writeln('<gpx version="1.1" creator="Trail4x4">');
+    buffer.writeln('<trk><name>Trail 4x4</name><trkseg>');
+    for (final point in _tracePoints) {
+      buffer.writeln(
+          '<trkpt lat="${point.latitude}" lon="${point.longitude}"></trkpt>');
+    }
+    buffer.writeln('</trkseg></trk></gpx>');
+    await file.writeAsString(buffer.toString());
   }
 
   void _sendSOS() async {
     if (_sosContacts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Aucun contact SOS. Ajoutez des contacts dans les paramètres.'),
+          content: Text('Ajoutez des contacts SOS dans les paramètres.'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
-
     final message =
         'URGENT - J\'ai besoin d\'aide ! Ma position GPS : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
-
     for (final contact in _sosContacts) {
       final uri = Uri(
         scheme: 'sms',
@@ -186,6 +240,16 @@ class _MapScreenState extends State<MapScreen> {
                     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.trail4x4.app',
               ),
+              if (_trace.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _trace,
+                      color: Colors.orange,
+                      strokeWidth: 4,
+                    ),
+                  ],
+                ),
               MarkerLayer(
                 markers: [
                   Marker(
@@ -212,9 +276,20 @@ class _MapScreenState extends State<MapScreen> {
                   const Text('Trail 4x4',
                       style: TextStyle(
                           fontSize: 20, fontWeight: FontWeight.bold)),
-                  IconButton(
-                    icon: const Icon(Icons.contacts, color: Colors.orange),
-                    onPressed: _showContactsDialog,
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _isRecording ? Icons.stop_circle : Icons.fiber_manual_record,
+                          color: _isRecording ? Colors.red : Colors.orange,
+                        ),
+                        onPressed: _toggleRecording,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.contacts, color: Colors.orange),
+                        onPressed: _showContactsDialog,
+                      ),
+                    ],
                   ),
                 ],
               ),
