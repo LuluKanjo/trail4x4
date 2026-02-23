@@ -37,6 +37,7 @@ class MapScreen extends StatefulWidget {
   final String weatherKey;
   final String tomtomKey;
   final String graphhopperKey;
+
   const MapScreen({
     super.key,
     required this.weatherKey,
@@ -55,21 +56,26 @@ class _MapScreenState extends State<MapScreen> {
   double _altitude = 0;
   double _distance = 0;
   LatLng? _lastPosition;
+  
   List<String> _sosContacts = [];
   bool _isRecording = false;
   final List<LatLng> _trace = [];
   List<LatLng> _tracePoints = [];
+  
   String _weatherDesc = '';
   double _weatherTemp = 0;
   double _windSpeed = 0;
+  
   late WeatherService _weatherService;
   late POIService _poiService;
   late RoutingService _routingService;
+  
   final List<POI> _pois = [];
   bool _showFuel = false;
   bool _showWater = false;
   bool _showCamp = false;
   bool _loadingPOI = false;
+  
   List<LatLng> _route = [];
   bool _loadingRoute = false;
 
@@ -112,6 +118,7 @@ class _MapScreenState extends State<MapScreen> {
     if (type == 'fuel') current = _showFuel;
     if (type == 'water') current = _showWater;
     if (type == 'camp') current = _showCamp;
+    
     if (current) {
       setState(() {
         _pois.removeWhere((p) => p.type == type);
@@ -121,9 +128,11 @@ class _MapScreenState extends State<MapScreen> {
       });
       return;
     }
+    
     setState(() => _loadingPOI = true);
     final pois = await _poiService.fetchPOIs(
         _currentPosition.latitude, _currentPosition.longitude, type);
+    
     setState(() {
       _pois.addAll(pois);
       if (type == 'fuel') _showFuel = true;
@@ -131,32 +140,28 @@ class _MapScreenState extends State<MapScreen> {
       if (type == 'camp') _showCamp = true;
       _loadingPOI = false;
     });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${pois.length} points trouves !'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
   }
 
   Future<void> _startTracking() async {
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) return;
+    
     _updateWeather();
+    
     Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
     ).listen((Position position) {
+      if (!mounted) return;
       setState(() {
         _currentPosition = LatLng(position.latitude, position.longitude);
         _speed = position.speed * 3.6;
         _altitude = position.altitude;
+        
         if (_lastPosition != null) {
-          final Distance calculator = Distance();
+          final Distance calculator = const Distance();
           _distance += calculator.as(
             LengthUnit.Kilometer,
             _lastPosition!,
@@ -164,6 +169,7 @@ class _MapScreenState extends State<MapScreen> {
           );
         }
         _lastPosition = _currentPosition;
+        
         if (_isRecording) {
           _tracePoints.add(_currentPosition);
           _trace.add(_currentPosition);
@@ -179,9 +185,7 @@ class _MapScreenState extends State<MapScreen> {
       setState(() => _isRecording = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Trace enregistree !'),
-              backgroundColor: Colors.green),
+          const SnackBar(content: Text('Trace sauvegardée !'), backgroundColor: Colors.green),
         );
       }
     } else {
@@ -192,9 +196,7 @@ class _MapScreenState extends State<MapScreen> {
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Enregistrement demarre !'),
-              backgroundColor: Colors.orange),
+          const SnackBar(content: Text('Enregistrement démarré'), backgroundColor: Colors.orange),
         );
       }
     }
@@ -202,59 +204,51 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _saveGPX() async {
     if (_tracePoints.isEmpty) return;
-    final dir = await getApplicationDocumentsDirectory();
-    final now = DateTime.now();
-    final filename =
-        'trace_${now.year}${now.month}${now.day}_${now.hour}${now.minute}.gpx';
-    final file = File('${dir.path}/$filename');
-    final buffer = StringBuffer();
-    buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
-    buffer.writeln('<gpx version="1.1" creator="Trail4x4">');
-    buffer.writeln('<trk><name>Trail 4x4</name><trkseg>');
-    for (final point in _tracePoints) {
-      buffer.writeln(
-          '<trkpt lat="${point.latitude}" lon="${point.longitude}"></trkpt>');
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final now = DateTime.now();
+      final filename = 'trace_${now.year}${now.month}${now.day}_${now.hour}${now.minute}.gpx';
+      final file = File('${dir.path}/$filename');
+      
+      final buffer = StringBuffer();
+      buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+      buffer.writeln('<gpx version="1.1" creator="Trail4x4">');
+      buffer.writeln('<trk><name>Trail 4x4</name><trkseg>');
+      for (final point in _tracePoints) {
+        buffer.writeln('<trkpt lat="${point.latitude}" lon="${point.longitude}"></trkpt>');
+      }
+      buffer.writeln('</trkseg></trk></gpx>');
+      
+      await file.writeAsString(buffer.toString());
+    } catch (e) {
+      print("Erreur écriture GPX: $e");
     }
-    buffer.writeln('</trkseg></trk></gpx>');
-    await file.writeAsString(buffer.toString());
   }
 
   Future<void> _calculateRoute(String destination) async {
     setState(() => _loadingRoute = true);
     try {
-      final url =
-          'https://nominatim.openstreetmap.org/search?q=$destination&format=json&limit=1';
-      final response = await http.get(Uri.parse(url),
-          headers: {'User-Agent': 'Trail4x4App'});
+      final url = 'https://nominatim.openstreetmap.org/search?q=$destination&format=json&limit=1';
+      final response = await http.get(Uri.parse(url), headers: {'User-Agent': 'Trail4x4App'});
+      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data.isNotEmpty) {
-          final dest = LatLng(
-              double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-          final route =
-              await _routingService.getOffRoadRoute(_currentPosition, dest);
-          if (route != null) {
+          final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+          final route = await _routingService.getOffRoadRoute(_currentPosition, dest);
+          
+          if (route != null && route.isNotEmpty) {
             setState(() => _route = route);
           } else {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Impossible de calculer le trajet.'),
-                    backgroundColor: Colors.red),
-              );
-            }
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trajet impossible.'), backgroundColor: Colors.red));
           }
         } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Destination introuvable.'),
-                  backgroundColor: Colors.red),
-            );
-          }
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destination introuvable.'), backgroundColor: Colors.red));
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      print('Erreur Geocoding: $e');
+    }
     setState(() => _loadingRoute = false);
   }
 
@@ -273,18 +267,14 @@ class _MapScreenState extends State<MapScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler',
-                style: TextStyle(color: Colors.white70)),
+            child: const Text('Annuler', style: TextStyle(color: Colors.white70)),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              if (controller.text.isNotEmpty) {
-                _calculateRoute(controller.text);
-              }
+              if (controller.text.isNotEmpty) _calculateRoute(controller.text);
             },
-            child: const Text('Calculer',
-                style: TextStyle(color: Colors.orange)),
+            child: const Text('Calculer', style: TextStyle(color: Colors.orange)),
           ),
         ],
       ),
@@ -293,22 +283,18 @@ class _MapScreenState extends State<MapScreen> {
 
   void _sendSOS() async {
     if (_sosContacts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Ajoutez des contacts SOS.'),
-            backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aucun contact SOS configuré.'), backgroundColor: Colors.red));
       return;
     }
-    final message =
-        'URGENT - besoin aide ! Position : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
+    final message = 'URGENT - besoin aide ! Position : https://maps.google.com/?q=${_currentPosition.latitude},${_currentPosition.longitude}';
+    
     for (final contact in _sosContacts) {
-      final uri = Uri(
-        scheme: 'sms',
-        path: contact,
-        queryParameters: {'body': message},
-      );
-      await launchUrl(uri);
+      final uri = Uri(scheme: 'sms', path: contact, queryParameters: {'body': message});
+      try {
+        await launchUrl(uri);
+      } catch (e) {
+        print("Erreur SOS: $e");
+      }
     }
   }
 
@@ -340,16 +326,14 @@ class _MapScreenState extends State<MapScreen> {
                     child: TextField(
                       controller: controller,
                       keyboardType: TextInputType.phone,
-                      decoration:
-                          const InputDecoration(hintText: '+33612345678'),
+                      decoration: const InputDecoration(hintText: '+33612345678'),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.add, color: Colors.orange),
                     onPressed: () {
                       if (controller.text.isNotEmpty) {
-                        setDialogState(
-                            () => _sosContacts.add(controller.text));
+                        setDialogState(() => _sosContacts.add(controller.text));
                         setState(() {});
                         _saveContacts();
                         controller.clear();
@@ -363,8 +347,7 @@ class _MapScreenState extends State<MapScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Fermer',
-                  style: TextStyle(color: Colors.orange)),
+              child: const Text('Fermer', style: TextStyle(color: Colors.orange)),
             ),
           ],
         ),
@@ -376,21 +359,10 @@ class _MapScreenState extends State<MapScreen> {
     IconData icon;
     Color color;
     switch (poi.type) {
-      case 'fuel':
-        icon = Icons.local_gas_station;
-        color = Colors.yellow;
-        break;
-      case 'water':
-        icon = Icons.water_drop;
-        color = Colors.blue;
-        break;
-      case 'camp':
-        icon = Icons.cabin;
-        color = Colors.green;
-        break;
-      default:
-        icon = Icons.place;
-        color = Colors.white;
+      case 'fuel': icon = Icons.local_gas_station; color = Colors.yellow; break;
+      case 'water': icon = Icons.water_drop; color = Colors.blue; break;
+      case 'camp': icon = Icons.cabin; color = Colors.green; break;
+      default: icon = Icons.place; color = Colors.white;
     }
     return Icon(icon, color: color, size: 28);
   }
@@ -401,18 +373,11 @@ class _MapScreenState extends State<MapScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: active
-              ? Colors.orange.withValues(alpha: 0.3)
-              : Colors.white.withValues(alpha: 0.1),
+          color: active ? Colors.orange.withAlpha(80) : Colors.white.withAlpha(25),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: active ? Colors.orange : Colors.white30,
-          ),
+          border: Border.all(color: active ? Colors.orange : Colors.white30),
         ),
-        child: Text(label,
-            style: TextStyle(
-                color: active ? Colors.orange : Colors.white70,
-                fontSize: 12)),
+        child: Text(label, style: TextStyle(color: active ? Colors.orange : Colors.white70, fontSize: 12)),
       ),
     );
   }
@@ -423,13 +388,8 @@ class _MapScreenState extends State<MapScreen> {
       children: [
         Icon(icon, color: Colors.orange, size: 20),
         const SizedBox(height: 4),
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold)),
-        Text(label,
-            style: const TextStyle(color: Colors.grey, fontSize: 11)),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)),
       ],
     );
   }
@@ -447,109 +407,48 @@ class _MapScreenState extends State<MapScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.trail4x4.app',
               ),
-              if (_route.isNotEmpty)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _route,
-                      color: Colors.blue,
-                      strokeWidth: 5,
-                    ),
-                  ],
-                ),
-              if (_trace.isNotEmpty)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _trace,
-                      color: Colors.orange,
-                      strokeWidth: 4,
-                    ),
-                  ],
-                ),
+              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.blue, strokeWidth: 5)]),
+              if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(
                 markers: [
                   ..._pois.map((poi) => Marker(
                         point: poi.position,
-                        width: 30,
-                        height: 30,
+                        width: 30, height: 30,
                         child: GestureDetector(
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(poi.name),
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
+                          onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(poi.name), duration: const Duration(seconds: 2))),
                           child: _poiMarker(poi),
                         ),
                       )),
                   Marker(
                     point: _currentPosition,
-                    width: 40,
-                    height: 40,
-                    child: const Icon(Icons.navigation,
-                        color: Colors.orange, size: 40),
+                    width: 40, height: 40,
+                    child: const Icon(Icons.navigation, color: Colors.orange, size: 40),
                   ),
                 ],
               ),
             ],
           ),
           Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
+            top: 0, left: 0, right: 0,
             child: Container(
-              color: Colors.brown[900]!.withValues(alpha: 0.9),
+              color: Colors.brown[900]!.withAlpha(230),
               padding: const EdgeInsets.fromLTRB(16, 40, 16, 8),
               child: Column(
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Trail 4x4',
-                          style: TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.bold)),
+                      const Text('Trail 4x4', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                       Row(
                         children: [
-                          IconButton(
-                            icon: const Icon(Icons.route,
-                                color: Colors.orange),
-                            onPressed: _showRouteDialog,
-                          ),
-                          if (_route.isNotEmpty)
-                            IconButton(
-                              icon: const Icon(Icons.close,
-                                  color: Colors.red),
-                              onPressed: () =>
-                                  setState(() => _route = []),
-                            ),
-                          IconButton(
-                            icon: Icon(
-                              _isRecording
-                                  ? Icons.stop_circle
-                                  : Icons.fiber_manual_record,
-                              color: _isRecording
-                                  ? Colors.red
-                                  : Colors.orange,
-                            ),
-                            onPressed: _toggleRecording,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.contacts,
-                                color: Colors.orange),
-                            onPressed: _showContactsDialog,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.cloud,
-                                color: Colors.orange),
-                            onPressed: _updateWeather,
-                          ),
+                          IconButton(icon: const Icon(Icons.route, color: Colors.orange), onPressed: _showRouteDialog),
+                          if (_route.isNotEmpty) IconButton(icon: const Icon(Icons.close, color: Colors.red), onPressed: () => setState(() => _route = [])),
+                          IconButton(icon: Icon(_isRecording ? Icons.stop_circle : Icons.fiber_manual_record, color: _isRecording ? Colors.red : Colors.orange), onPressed: _toggleRecording),
+                          IconButton(icon: const Icon(Icons.contacts, color: Colors.orange), onPressed: _showContactsDialog),
+                          IconButton(icon: const Icon(Icons.cloud, color: Colors.orange), onPressed: _updateWeather),
                         ],
                       ),
                     ],
@@ -560,15 +459,9 @@ class _MapScreenState extends State<MapScreen> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          Text('${_weatherTemp.toStringAsFixed(0)}C',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 13)),
-                          Text('${_windSpeed.toStringAsFixed(0)} m/s',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 13)),
-                          Text(_weatherDesc,
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 13)),
+                          Text('${_weatherTemp.toStringAsFixed(0)}°C', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                          Text('${_windSpeed.toStringAsFixed(0)} m/s', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                          Text(_weatherDesc, style: const TextStyle(color: Colors.white70, fontSize: 13)),
                         ],
                       ),
                     ),
@@ -584,11 +477,9 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
-          if (_loadingPOI || _loadingRoute)
-            const Center(child: CircularProgressIndicator()),
+          if (_loadingPOI || _loadingRoute) const Center(child: CircularProgressIndicator()),
           Positioned(
-            right: 16,
-            bottom: 140,
+            right: 16, bottom: 140,
             child: FloatingActionButton(
               onPressed: () => _mapController.move(_currentPosition, 15),
               backgroundColor: Colors.brown[800],
@@ -596,33 +487,24 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           Positioned(
-            left: 16,
-            bottom: 140,
+            left: 16, bottom: 140,
             child: FloatingActionButton(
-              onPressed: _sendSOS ,
+              onPressed: _sendSOS,
               backgroundColor: Colors.red[800],
-              child: const Text('SOS',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16)),
+              child: const Text('SOS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
             ),
           ),
           Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
+            bottom: 0, left: 0, right: 0,
             child: Container(
-              color: Colors.brown[900]!.withValues(alpha: 0.9),
+              color: Colors.brown[900]!.withAlpha(230),
               padding: const EdgeInsets.all(16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildStat('Vitesse',
-                      '${_speed.toStringAsFixed(0)} km/h', Icons.speed),
-                  _buildStat('Altitude',
-                      '${_altitude.toStringAsFixed(0)} m', Icons.terrain),
-                  _buildStat('Distance',
-                      '${_distance.toStringAsFixed(2)} km',
-                      Icons.straighten),
+                  _buildStat('Vitesse', '${_speed.toStringAsFixed(0)} km/h', Icons.speed),
+                  _buildStat('Altitude', '${_altitude.toStringAsFixed(0)} m', Icons.terrain),
+                  _buildStat('Distance', '${_distance.toStringAsFixed(2)} km', Icons.straighten),
                 ],
               ),
             ),
