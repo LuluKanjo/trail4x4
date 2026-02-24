@@ -11,37 +11,40 @@ class RouteData {
 class RoutingService {
   RoutingService(String _); 
 
-  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints) async {
-    if (waypoints.length < 2) return null;
+  Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest, List<LatLng> forbiddenZones) async {
+    // Formatage de tes zones interdites (rayon de 50 mètres)
+    final String noGo = forbiddenZones.map((p) => '${p.longitude},${p.latitude},50').join('|');
 
-    final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
-
-    // PROFIL REVISITÉ : Base "Trekking" (cherche les chemins par défaut)
-    // Mais on pénalise les "footway" (piétons) pour rester sur du carrossable
+    // PROFIL 4X4 ROAD TRIP STRICT
+    // On cherche les pistes (track) larges. On limite le goudron aux liaisons.
     const customProfile = '''
 --- context:global ---
-assign track_priority = 0.001
+assign track_priority = 0.1
 --- context:way ---
-assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
-assign is_forbidden_for_4x4 = if highway=footway|path|steps then 1 else 0
+assign is_track = if highway=track then 1 else 0
+assign is_liaison = if highway=unclassified|tertiary|secondary then 1 else 0
+assign is_bad_idea = if highway=motorway|trunk|primary|path|footway then 1 else 0
 
 assign costfactor
-  if is_forbidden_for_4x4 then 9999
-  else if highway=track then 1.0
-  else if is_paved then 5000
-  else 2.0
+  if is_bad_idea then 10000.0
+  else if is_track then 1.0
+  else if is_liaison then 50.0
+  else 100.0
 ''';
 
-    final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: {
-      'lonlats': lonLats,
-      'profile': 'trekking', // LE CHANGEMENT MAJEUR EST ICI
+    final queryParams = {
+      'lonlats': '${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}',
+      'profile': 'car-eco', // Base voiture pour le respect du gabarit et de la loi
       'alternativeidx': '0',
       'format': 'geojson',
       'customprofile': customProfile,
-    });
+    };
     
+    // Ajout de tes interdictions manuelles
+    if (noGo.isNotEmpty) queryParams['nogo'] = noGo;
+
     try {
-      final response = await http.get(url);
+      final response = await http.get(Uri.parse('https://brouter.de/brouter').replace(queryParameters: queryParams));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final feature = data['features'][0];
