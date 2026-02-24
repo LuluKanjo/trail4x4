@@ -7,12 +7,21 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
+
+// LES DEUX NOUVELLES OPTIONS
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:file_picker/file_picker.dart';
+
 import 'routing_service.dart';
 import 'poi_service.dart';
 import 'weather_service.dart';
 
-void main() => runApp(const Trail4x4App());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const Trail4x4App());
+}
 
 class Trail4x4App extends StatelessWidget {
   const Trail4x4App({super.key});
@@ -33,12 +42,13 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isRec = false, _loading = false;
-  bool _isNavigating = false; // LE NOUVEAU MODE GUIDAGE
+  bool _isNavigating = false; 
   String _weather = "--°C";
   
   List<LatLng> _route = [];
   final List<LatLng> _waypoints = [];
   final List<LatLng> _trace = [];
+  List<LatLng> _importedTrace = []; // LA NOUVELLE TRACE IMPORTÉE
   final List<LatLng> _forbiddenZones = [];
   final List<POI> _pois = [];
   
@@ -50,6 +60,9 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    // OPTION 1 : ANTI-VEILLE ACTIVÉ 🔋
+    WakelockPlus.enable(); 
+
     _routing = RoutingService('');
     _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
     _weatherService = WeatherService();
@@ -87,17 +100,13 @@ class _MapScreenState extends State<MapScreen> {
         if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
       });
       
-      // LOGIQUE DE LA CAMÉRA (ZOOM & ROTATION)
       if (_follow) {
-        // En navigation, on zoome fort (17.5). Sinon on garde le zoom actuel.
-        double currentZoom = _isNavigating ? 17.5 : _mapController.camera.zoom;
-        _mapController.move(_currentPos, currentZoom);
-        
-        // Si on roule à plus de 3 km/h en mode nav, on fait pivoter la carte
-        if (_isNavigating && _speed > 3) {
-          _mapController.rotate(360 - _head);
-        } else if (!_isNavigating) {
-          _mapController.rotate(0); // On remet la carte à plat vers le Nord
+        if (_isNavigating) {
+          _mapController.move(_currentPos, 17.5);
+          if (_speed > 1.0) _mapController.rotate(360 - _head);
+        } else {
+          _mapController.move(_currentPos, _mapController.camera.zoom);
+          _mapController.rotate(0);
         }
       }
     });
@@ -132,6 +141,47 @@ class _MapScreenState extends State<MapScreen> {
       debugPrint(e.toString()); 
     }
     setState(() => _loading = false);
+  }
+
+  // OPTION 2 : LE LECTEUR DE FICHIER GPX 🗺️
+  Future<void> _loadGPX() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
+      if (result != null && result.files.single.path != null) {
+        File file = File(result.files.single.path!);
+        String contents = await file.readAsString();
+        
+        // On scanne le fichier pour trouver toutes les coordonnées
+        RegExp tagExp = RegExp(r'<trkpt([^>]+)>');
+        Iterable<RegExpMatch> matches = tagExp.allMatches(contents);
+        
+        List<LatLng> newTrace = [];
+        for (var m in matches) {
+          String attrs = m.group(1) ?? '';
+          RegExp latExp = RegExp(r'lat="([^"]+)"');
+          RegExp lonExp = RegExp(r'lon="([^"]+)"');
+          String? latStr = latExp.firstMatch(attrs)?.group(1);
+          String? lonStr = lonExp.firstMatch(attrs)?.group(1);
+          
+          if (latStr != null && lonStr != null) {
+            newTrace.add(LatLng(double.parse(latStr), double.parse(lonStr)));
+          }
+        }
+        
+        if (newTrace.isNotEmpty) {
+          setState(() {
+            _importedTrace = newTrace;
+            _follow = false; // On lâche la caméra pour que tu puisses voir la trace
+          });
+          _mapController.move(newTrace.first, 13); // On zoome sur le départ de la trace
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Trace chargée (${newTrace.length} points) !"), backgroundColor: Colors.green));
+        } else {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aucun point valide trouvé dans ce fichier.")));
+        }
+      }
+    } catch (e) {
+      debugPrint("Erreur GPX: $e");
+    }
   }
 
   void _addForbiddenZone() async {
@@ -170,7 +220,6 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !"), backgroundColor: Colors.green));
   }
 
-  // BOUTONS ET HUD
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
   Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
@@ -195,24 +244,31 @@ class _MapScreenState extends State<MapScreen> {
                   ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
+              // TRACE DU COPAIN (VIOLET)
+              if (_importedTrace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _importedTrace, color: Colors.purpleAccent, strokeWidth: 6)]),
+              // LIGNE DE GUIDAGE (CYAN)
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
+              // TA PROPRE TRACE ENREGISTRÉE (ORANGE)
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
+              
               MarkerLayer(markers: [
                 ..._forbiddenZones.map((p) => Marker(point: p, child: const Icon(Icons.do_not_disturb, color: Colors.red))),
                 ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : (p.type == 'water' ? Icons.water_drop : Icons.terrain), color: p.type == 'fuel' ? Colors.yellow : (p.type == 'water' ? Colors.blue : Colors.green)))),
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
-                Marker(point: _currentPos, width: 60, height: 60, child: const Icon(Icons.navigation, color: Colors.orange, size: 50)),
+                Marker(
+                  point: _currentPos, 
+                  width: 60, height: 60, 
+                  child: Transform.rotate(
+                    angle: _isNavigating ? 0 : (_head * math.pi / 180),
+                    child: const Icon(Icons.navigation, color: Colors.orange, size: 50),
+                  )
+                ),
               ]),
             ],
           ),
           
-          // HUD HAUT (Différent si on navigue ou pas)
-          Positioned(top: 40, left: 10, right: 10, child: _isNavigating 
-            ? _buildNavHud() 
-            : _buildStandardHud()
-          ),
+          Positioned(top: 40, left: 10, right: 10, child: _isNavigating ? _buildNavHud() : _buildStandardHud()),
 
-          // BARRE GAUCHE
           if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(children: [
             Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
@@ -221,12 +277,10 @@ class _MapScreenState extends State<MapScreen> {
             _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
 
-          // BOUTON INTERDIT (Toujours visible pour bloquer un chemin en urgence)
           if (_isNavigating) Positioned(left: 10, top: 120, child: FloatingActionButton(
             backgroundColor: Colors.red, onPressed: _addForbiddenZone, child: const Icon(Icons.block, color: Colors.white, size: 30)
           )),
 
-          // BARRE DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             if (!_isNavigating) ...[
               _btn(Icons.search, Colors.cyan.shade700, () {
@@ -237,6 +291,9 @@ class _MapScreenState extends State<MapScreen> {
                   actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _searchAddress(c.text); nav.pop(); }, child: const Text("GO"))],
                 ));
               }),
+              const SizedBox(height: 10),
+              // LE BOUTON DOSSIER POUR OUVRIR UN FICHIER GPX
+              _btn(Icons.folder_open, Colors.blueAccent, _loadGPX),
               const SizedBox(height: 10),
             ],
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
@@ -250,7 +307,6 @@ class _MapScreenState extends State<MapScreen> {
             if (!_isNavigating) _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
 
-          // DASHBOARD BAS
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 90, color: Colors.black,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -266,7 +322,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // HUD quand on prépare le trajet
   Widget _buildStandardHud() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -289,15 +344,17 @@ class _MapScreenState extends State<MapScreen> {
             ]),
           ),
         ]),
-        if (_route.isEmpty) _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey.shade800, () {
-          setState(() => _isRec = !_isRec);
-          if (!_isRec) _saveTraceGPX();
-        }),
+        if (_route.isEmpty) Row(children: [
+          if (_importedTrace.isNotEmpty) IconButton(icon: const Icon(Icons.clear_all, color: Colors.purpleAccent), onPressed: () => setState(() => _importedTrace = [])),
+          _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey.shade800, () {
+            setState(() => _isRec = !_isRec);
+            if (!_isRec) _saveTraceGPX();
+          }),
+        ]),
       ],
     );
   }
 
-  // HUD quand on roule (Navigation)
   Widget _buildNavHud() {
     return Container(
       padding: const EdgeInsets.all(10),
