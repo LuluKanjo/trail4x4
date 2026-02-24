@@ -16,25 +16,25 @@ class RoutingService {
 
     final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
 
-    // LE PROFIL "SANS LIMITES"
-    // On force le coût des routes à 10 000 et les pistes à 1.
-    // On autorise TOUS les accès (motor_vehicle=no est ignoré).
+    // PROFIL REVISITÉ : Base "Trekking" (cherche les chemins par défaut)
+    // Mais on pénalise les "footway" (piétons) pour rester sur du carrossable
     const customProfile = '''
 --- context:global ---
 assign track_priority = 0.001
 --- context:way ---
-assign is_track = if highway=track then 1 else 0
-assign is_big_road = if highway=motorway|trunk|primary|secondary then 1 else 0
+assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
+assign is_forbidden_for_4x4 = if highway=footway|path|steps then 1 else 0
 
 assign costfactor
-  if is_track then 1.0
-  else if is_big_road then 10000.0
-  else 10.0
+  if is_forbidden_for_4x4 then 9999
+  else if highway=track then 1.0
+  else if is_paved then 5000
+  else 2.0
 ''';
 
     final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: {
       'lonlats': lonLats,
-      'profile': 'car-eco', 
+      'profile': 'trekking', // LE CHANGEMENT MAJEUR EST ICI
       'alternativeidx': '0',
       'format': 'geojson',
       'customprofile': customProfile,

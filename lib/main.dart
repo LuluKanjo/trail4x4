@@ -60,12 +60,12 @@ class _MapScreenState extends State<MapScreen> {
     setState(() { _loading = true; _waypoints.add(point); });
     final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints]);
     if (data != null) {
-      setState(() { _route = data.points; _remDist = data.distance; _follow = true; });
+      setState(() { _route = data.points; _remDist = data.distance; });
     }
     setState(() => _loading = false);
   }
 
-  // LA FONCTION POUR REVENIR À TA POSITION
+  // BOUTON RECENTER
   void _recenter() {
     setState(() => _follow = true);
     _mapController.move(_currentPos, 15);
@@ -100,38 +100,21 @@ class _MapScreenState extends State<MapScreen> {
               ]),
             ],
           ),
-          
-          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _btn(Icons.delete_sweep, Colors.red, () { setState(() { _route = []; _waypoints.clear(); }); }),
-              if (_route.isNotEmpty) Container(
-                padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.cyanAccent)),
-                child: Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold)),
-              ),
+              if (_route.isNotEmpty) _navInfo(),
               const SizedBox(width: 40),
             ],
           )),
-
-          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            // LE BOUTON REVENIR
+            // BOUTON RECENTER
             _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, _recenter),
           ])),
-
-          // DASHBOARD
-          Positioned(bottom: 0, left: 0, right: 0, child: Container(
-            height: 100, color: Colors.black,
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _dash(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
-              _dash(_alt.toStringAsFixed(0), "ALT", Colors.white),
-              _dash(_getDir(_head), "CAP", Colors.cyanAccent),
-            ]),
-          )),
+          Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
       ),
@@ -139,9 +122,12 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _dash(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    Text(v, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: c)),
-    Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-  ]);
+  Widget _navInfo() => Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM"));
+  Widget _dash() => Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+    _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
+    _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
+    _stat(_getDir(_head), "CAP", Colors.cyanAccent),
+  ]));
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 }
