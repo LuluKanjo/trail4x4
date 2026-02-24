@@ -12,20 +12,19 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // SCRIPT DE COÛT PERSONNALISÉ
-    // On pénalise l'asphalte (coût 50) et on favorise les pistes (coût 1.1)
+    // SCRIPT RADICAL : On force le passage sur piste (highway=track)
+    // On ignore les pénalités de surface pour ne pas bloquer le 4x4
     const customProfile = '''
 --- context:global ---
-assign track_priority = 1.0
+assign track_priority = 0.1
 --- context:way ---
 assign costfactor
-  if highway=motorway|motorway_link then 100
-  else if highway=trunk|trunk_link then 50
-  else if highway=primary|primary_link then 30
-  else if highway=secondary|secondary_link then 15
-  else if highway=track then 1.1
-  else if highway=service|residential|unclassified then 2.5
-  else 100
+  if highway=track then 1.0
+  else if highway=motorway|motorway_link|trunk|trunk_link then 80
+  else if highway=primary|primary_link|secondary|secondary_link then 40
+  else if highway=tertiary|tertiary_link|unclassified then 10
+  else if highway=service|residential then 5
+  else 2.0
 ''';
 
     final url = Uri.parse('https://brouter.de/brouter')
@@ -43,17 +42,11 @@ assign costfactor
         final data = json.decode(response.body);
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
-        
-        // FIX : Erreur toDouble() - On transforme tout en String avant de parser
         final rawDist = feature['properties']['track-length'];
         final double dist = double.tryParse(rawDist.toString()) ?? 0.0;
-        
-        final points = coords.map((p) => LatLng(p[1], p[0])).toList();
-        return RouteData(points, dist);
+        return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
       }
-    } catch (e) {
-      print('Erreur BRouter: $e');
-    }
+    } catch (e) { print('Erreur BRouter: $e'); }
     return null;
   }
 }
