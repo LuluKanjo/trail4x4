@@ -127,7 +127,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _forbiddenZones.add(_currentPos));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('forbidden_zones', _forbiddenZones.map((p) => '${p.latitude},${p.longitude}').toList());
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Chemin bloqué mémorisé !"), backgroundColor: Colors.red));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Interdiction mémorisée"), backgroundColor: Colors.red));
     if (_waypoints.isNotEmpty) _updateRoute();
   }
 
