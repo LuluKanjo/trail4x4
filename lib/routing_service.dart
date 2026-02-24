@@ -16,26 +16,25 @@ class RoutingService {
 
     final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
 
-    // PROFIL RADICAL "DEFENDER 110"
-    // On ignore les accès (is_forbidden=0)
-    // On met un coût de 10 000 sur l'asphalte (énorme !)
+    // LE PROFIL "SANS LIMITES"
+    // On force le coût des routes à 10 000 et les pistes à 1.
+    // On autorise TOUS les accès (motor_vehicle=no est ignoré).
     const customProfile = '''
 --- context:global ---
-assign track_priority = 0.01
+assign track_priority = 0.001
 --- context:way ---
-assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
-assign is_road = if highway=motorway|trunk|primary|secondary|tertiary then 1 else 0
+assign is_track = if highway=track then 1 else 0
+assign is_big_road = if highway=motorway|trunk|primary|secondary then 1 else 0
 
 assign costfactor
-  if highway=track then 1.0
-  else if is_paved then 10000.0
-  else if is_road then 5000.0
-  else 2.0
+  if is_track then 1.0
+  else if is_big_road then 10000.0
+  else 10.0
 ''';
 
     final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: {
       'lonlats': lonLats,
-      'profile': 'moped', 
+      'profile': 'car-eco', 
       'alternativeidx': '0',
       'format': 'geojson',
       'customprofile': customProfile,
