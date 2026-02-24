@@ -18,7 +18,8 @@ class RoutingService {
     final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
     final String noGo = forbiddenZones.map((p) => '${p.longitude},${p.latitude},50').join('|');
 
-    String url = 'https://brouter.de/brouter?lonlats=$lonLats&profile=moped&alternativeidx=0&format=geojson';
+    // LE SECRET : Le profil "bicycle" passe sur tous les chemins de terre, même "interdits" aux moteurs.
+    String url = 'https://brouter.de/brouter?lonlats=$lonLats&profile=bicycle&alternativeidx=0&format=geojson';
     if (noGo.isNotEmpty) url += '&nogo=$noGo';
 
     try {
