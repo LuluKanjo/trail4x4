@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'routing_service.dart';
-import 'poi_service.dart';
 
 void main() => runApp(const Trail4x4App());
 
@@ -31,31 +29,13 @@ class _MapScreenState extends State<MapScreen> {
   
   List<LatLng> _route = [];
   final List<LatLng> _waypoints = [];
-  final List<LatLng> _forbiddenPoints = [];
-  
   late RoutingService _routing;
-  late POIService _poiService;
 
   @override
   void initState() {
     super.initState();
     _routing = RoutingService('');
-    _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
-    _loadForbidden();
     _startTracking();
-  }
-
-  void _loadForbidden() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String>? saved = prefs.getStringList('forbidden_zones');
-    if (saved != null) {
-      setState(() {
-        _forbiddenPoints.addAll(saved.map((s) {
-          final parts = s.split(',');
-          return LatLng(double.parse(parts[0]), double.parse(parts[1]));
-        }));
-      });
-    }
   }
 
   void _startTracking() async {
@@ -68,7 +48,9 @@ class _MapScreenState extends State<MapScreen> {
         _speed = pos.speed * 3.6;
         _alt = pos.altitude;
         _head = pos.heading;
-        if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
+        if (_route.isNotEmpty) {
+          _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
+        }
       });
       if (_follow) {
         _mapController.move(_currentPos, _mapController.camera.zoom);
@@ -80,8 +62,14 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty) return;
     setState(() => _loading = true);
-    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenPoints);
-    if (data != null) setState(() { _route = data.points; _remDist = data.distance; });
+    // On calcule toujours depuis la position actuelle vers tous les points posés
+    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints]);
+    if (data != null) {
+      setState(() {
+        _route = data.points;
+        _remDist = data.distance;
+      });
+    }
     setState(() => _loading = false);
   }
 
@@ -99,9 +87,13 @@ class _MapScreenState extends State<MapScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _currentPos, initialZoom: 15,
+              initialCenter: _currentPos, 
+              initialZoom: 15,
               onPositionChanged: (p, g) { if(g) setState(() => _follow = false); },
-              onLongPress: (tp, ll) { setState(() => _waypoints.add(ll)); _updateRoute(); },
+              onLongPress: (tp, ll) {
+                setState(() => _waypoints.add(ll));
+                _updateRoute();
+              },
             ),
             children: [
               TileLayer(
@@ -110,28 +102,45 @@ class _MapScreenState extends State<MapScreen> {
                   ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
-              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)]),
+              if (_route.isNotEmpty) PolylineLayer(polylines: [
+                Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)
+              ]),
               MarkerLayer(markers: [
-                ..._forbiddenPoints.map((p) => Marker(point: p, child: const Icon(Icons.block, color: Colors.red, size: 30))),
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent, size: 30))),
                 Marker(point: _currentPos, width: 60, height: 60, child: const Icon(Icons.navigation, color: Colors.orange, size: 50)),
               ]),
             ],
           ),
+          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _btn(Icons.block, Colors.red, () { setState(() => _forbiddenPoints.add(_currentPos)); _updateRoute(); }),
-              if (_route.isNotEmpty) _navInfo(),
-              _btn(Icons.delete_sweep, Colors.grey[800]!, () { setState(() { _route = []; _waypoints.clear(); }); }),
+              _btn(Icons.delete_sweep, Colors.red, () {
+                setState(() { _route = []; _waypoints.clear(); _remDist = 0; });
+              }),
+              if (_route.isNotEmpty) Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)),
+                child: Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(width: 40), // Equilibre visuel
             ],
           )),
+          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, _recenter),
+            _btn(Icons.my_location, _follow ? Colors.orange : (Colors.grey[800] ?? Colors.grey), _recenter),
           ])),
-          Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
+          // DASHBOARD
+          Positioned(bottom: 0, left: 0, right: 0, child: Container(
+            height: 90, color: Colors.black,
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+              _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
+              _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
+              _stat(_getDir(_head), "CAP", Colors.cyanAccent),
+            ]),
+          )),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
       ),
@@ -139,12 +148,12 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _navInfo() => Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM"));
-  Widget _dash() => Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-    _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
-    _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
-    _stat(_getDir(_head), "CAP", Colors.cyanAccent),
-  ]));
-  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
-  String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)),
+    Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))
+  ]);
+  String _getDir(double h) {
+    if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE";
+    if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO";
+  }
 }
