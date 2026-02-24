@@ -92,7 +92,6 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  // --- MOTEUR DE CALCUL ---
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty) return;
     setState(() => _loading = true);
@@ -100,7 +99,7 @@ class _MapScreenState extends State<MapScreen> {
     if (data != null) {
       setState(() { _route = data.points; _remDist = data.distance; _follow = true; });
     } else {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Oups, aucun passage trouvé. Pose un point plus près.")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aucun passage trouvé.")));
       setState(() { _route = []; _remDist = 0; });
     }
     setState(() => _loading = false);
@@ -118,17 +117,18 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lieu introuvable")));
       }
-    } catch (e) { debugPrint(e.toString()); }
+    } catch (e) { 
+      debugPrint(e.toString()); 
+    }
     setState(() => _loading = false);
   }
 
-  // --- ACTIONS 4X4 ---
   void _addForbiddenZone() async {
     setState(() => _forbiddenZones.add(_currentPos));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('forbidden_zones', _forbiddenZones.map((p) => '${p.latitude},${p.longitude}').toList());
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Interdiction mémorisée"), backgroundColor: Colors.red));
-    if (_waypoints.isNotEmpty) _updateRoute(); // Recalcul direct
+    if (_waypoints.isNotEmpty) _updateRoute();
   }
 
   void _togglePOI(String type) async {
@@ -143,7 +143,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _sendSOS() async {
     if (_sosContacts.isEmpty) return;
-    final msg = "SOS 4X4 ! Aide demandée ici : http://maps.google.com/maps?q=${_currentPos.latitude},${_currentPos.longitude}";
+    final msg = "SOS 4X4 ! Aide demandée ici : http://googleusercontent.com/maps.google.com/?q=${_currentPos.latitude},${_currentPos.longitude}";
     final uri = Uri.parse("sms:${_sosContacts.first}?body=${Uri.encodeComponent(msg)}");
     await launchUrl(uri);
   }
@@ -159,7 +159,6 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !"), backgroundColor: Colors.green));
   }
 
-  // --- INTERFACE ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,7 +189,6 @@ class _MapScreenState extends State<MapScreen> {
             ],
           ),
           
-          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -210,7 +208,6 @@ class _MapScreenState extends State<MapScreen> {
             ],
           )),
 
-          // BARRE GAUCHE (Interdictions, POI, Météo)
           Positioned(left: 10, top: 120, child: Column(children: [
             Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
@@ -221,7 +218,6 @@ class _MapScreenState extends State<MapScreen> {
             _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
 
-          // BARRE DROITE (Recherche, Sat, GPS, Params)
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(Icons.search, Colors.cyan.shade700, () {
               final c = TextEditingController();
@@ -239,7 +235,6 @@ class _MapScreenState extends State<MapScreen> {
             _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
 
-          // DASHBOARD BAS
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 90, color: Colors.black,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [

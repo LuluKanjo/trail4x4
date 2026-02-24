@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
@@ -17,26 +18,25 @@ class POIService {
       final url = 'https://api.tomtom.com/search/2/search/petrol station.json?lat=$lat&lon=$lon&radius=30000&key=$tomtomKey';
       try {
         final res = await http.get(Uri.parse(url));
-        final data = json.decode(res.body);
-        final List results = data['results'] ?? [];
-        return results.map((r) => POI(name: r['poi']['name'] ?? 'Station', type: type, position: LatLng(r['position']['lat'], r['position']['lon']))).toList();
-      } catch (e) { return []; }
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body);
+          final List results = data['results'] ?? [];
+          return results.map((r) => POI(name: r['poi']['name'] ?? 'Station', type: type, position: LatLng(r['position']['lat'], r['position']['lon']))).toList();
+        }
+      } catch (e) { debugPrint("Erreur POI fuel: $e"); }
     } else {
-      // UTILISATION D'OVERPASS POUR L'EAU ET LE BIVOUAC (Précision Pampa)
       String query = type == 'water' 
-        ? '[out:json];node(around:20000,$lat,$lon)["amenity"~"drinking_water|water_point"];out;'
-        : '[out:json];node(around:20000,$lat,$lon)["tourism"~"camp_site|picnic_site"];out;';
-      
+        ? '[out:json];node(around:15000,$lat,$lon)["amenity"~"drinking_water|water_point|fountain"];out;'
+        : '[out:json];node(around:15000,$lat,$lon)["tourism"~"camp_site|picnic_site"];out;';
       try {
         final res = await http.get(Uri.parse('https://overpass-api.de/api/interpreter?data=$query'));
-        final data = json.decode(res.body);
-        final List elements = data['elements'] ?? [];
-        return elements.map((e) => POI(
-          name: e['tags']['name'] ?? (type == 'water' ? 'Point d\'eau' : 'Bivouac/Pique-nique'),
-          type: type,
-          position: LatLng(e['lat'], e['lon']),
-        )).toList();
-      } catch (e) { return []; }
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body);
+          final List elements = data['elements'] ?? [];
+          return elements.map((e) => POI(name: e['tags']['name'] ?? (type == 'water' ? 'Eau' : 'Bivouac'), type: type, position: LatLng(e['lat'], e['lon']))).toList();
+        }
+      } catch (e) { debugPrint("Erreur POI Overpass: $e"); }
     }
+    return [];
   }
 }

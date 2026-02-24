@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class WeatherService {
@@ -9,10 +10,10 @@ class WeatherService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final temp = data['current_weather']['temperature'];
-        return "$temp°C";
+        return "${(temp as num).round()}°C";
       }
     } catch (e) {
-      return "--°C";
+      debugPrint("Erreur météo: $e");
     }
     return "--°C";
   }
