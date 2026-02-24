@@ -33,6 +33,7 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isRec = false, _loading = false;
+  bool _isNavigating = false; // LE NOUVEAU MODE GUIDAGE
   String _weather = "--°C";
   
   List<LatLng> _route = [];
@@ -85,9 +86,19 @@ class _MapScreenState extends State<MapScreen> {
         if (_isRec) _trace.add(_currentPos);
         if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
       });
+      
+      // LOGIQUE DE LA CAMÉRA (ZOOM & ROTATION)
       if (_follow) {
-        _mapController.move(_currentPos, _mapController.camera.zoom);
-        if (_speed > 3) _mapController.rotate(-_head);
+        // En navigation, on zoome fort (17.5). Sinon on garde le zoom actuel.
+        double currentZoom = _isNavigating ? 17.5 : _mapController.camera.zoom;
+        _mapController.move(_currentPos, currentZoom);
+        
+        // Si on roule à plus de 3 km/h en mode nav, on fait pivoter la carte
+        if (_isNavigating && _speed > 3) {
+          _mapController.rotate(360 - _head);
+        } else if (!_isNavigating) {
+          _mapController.rotate(0); // On remet la carte à plat vers le Nord
+        }
       }
     });
   }
@@ -100,7 +111,7 @@ class _MapScreenState extends State<MapScreen> {
       setState(() { _route = data.points; _remDist = data.distance; _follow = true; });
     } else {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace impossible à calculer.")));
-      setState(() { _route = []; _remDist = 0; });
+      setState(() { _route = []; _remDist = 0; _isNavigating = false; });
     }
     setState(() => _loading = false);
   }
@@ -127,7 +138,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _forbiddenZones.add(_currentPos));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('forbidden_zones', _forbiddenZones.map((p) => '${p.latitude},${p.longitude}').toList());
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Interdiction mémorisée"), backgroundColor: Colors.red));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Mur invisible créé ! Recalcul..."), backgroundColor: Colors.red));
     if (_waypoints.isNotEmpty) _updateRoute();
   }
 
@@ -159,6 +170,12 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !"), backgroundColor: Colors.green));
   }
 
+  // BOUTONS ET HUD
+  Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
+  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
+  String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -178,7 +195,7 @@ class _MapScreenState extends State<MapScreen> {
                   ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
-              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)]),
+              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
                 ..._forbiddenZones.map((p) => Marker(point: p, child: const Icon(Icons.do_not_disturb, color: Colors.red))),
@@ -189,52 +206,51 @@ class _MapScreenState extends State<MapScreen> {
             ],
           ),
           
-          Positioned(top: 40, left: 10, right: 10, child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _btn(Icons.warning, Colors.red, _sendSOS),
-              if (_route.isNotEmpty) Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)),
-                child: Row(children: [
-                  Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  IconButton(icon: const Icon(Icons.close, color: Colors.red, size: 20), onPressed: () => setState(() { _route = []; _waypoints.clear(); _remDist = 0; })),
-                ]),
-              ),
-              _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey.shade800, () {
-                setState(() => _isRec = !_isRec);
-                if (!_isRec) _saveTraceGPX();
-              }),
-            ],
-          )),
+          // HUD HAUT (Différent si on navigue ou pas)
+          Positioned(top: 40, left: 10, right: 10, child: _isNavigating 
+            ? _buildNavHud() 
+            : _buildStandardHud()
+          ),
 
-          Positioned(left: 10, top: 120, child: Column(children: [
+          // BARRE GAUCHE
+          if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(children: [
             Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
-            const SizedBox(height: 15),
-            _btn(Icons.block, Colors.red, _addForbiddenZone),
             const SizedBox(height: 15),
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("water", Icons.water_drop, Colors.blue),
             _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
 
+          // BOUTON INTERDIT (Toujours visible pour bloquer un chemin en urgence)
+          if (_isNavigating) Positioned(left: 10, top: 120, child: FloatingActionButton(
+            backgroundColor: Colors.red, onPressed: _addForbiddenZone, child: const Icon(Icons.block, color: Colors.white, size: 30)
+          )),
+
+          // BARRE DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
-            _btn(Icons.search, Colors.cyan.shade700, () {
-              final c = TextEditingController();
-              showDialog(context: context, builder: (ctx) => AlertDialog(
-                title: const Text("Naviguer vers :"),
-                content: TextField(controller: c, decoration: const InputDecoration(hintText: "Pignan, Adresse...")),
-                actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _searchAddress(c.text); nav.pop(); }, child: const Text("GO"))],
-              ));
-            }),
-            const SizedBox(height: 10),
+            if (!_isNavigating) ...[
+              _btn(Icons.search, Colors.cyan.shade700, () {
+                final c = TextEditingController();
+                showDialog(context: context, builder: (ctx) => AlertDialog(
+                  title: const Text("Naviguer vers :"),
+                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Pignan, Adresse...")),
+                  actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _searchAddress(c.text); nav.pop(); }, child: const Text("GO"))],
+                ));
+              }),
+              const SizedBox(height: 10),
+            ],
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey.shade800, () { setState(() => _follow = true); _mapController.move(_currentPos, 15); _mapController.rotate(0); }),
+            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey.shade800, () { 
+              setState(() => _follow = true); 
+              _mapController.move(_currentPos, _isNavigating ? 17.5 : 15); 
+              if (!_isNavigating) _mapController.rotate(0);
+            }),
             const SizedBox(height: 10),
-            _btn(Icons.settings, Colors.black87, _showSettings),
+            if (!_isNavigating) _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
 
+          // DASHBOARD BAS
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 90, color: Colors.black,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -250,11 +266,56 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
-  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
-  String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
-  
+  // HUD quand on prépare le trajet
+  Widget _buildStandardHud() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _btn(Icons.warning, Colors.red, _sendSOS),
+        if (_route.isNotEmpty) Row(children: [
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
+            icon: const Icon(Icons.play_arrow, color: Colors.white),
+            label: const Text("DÉMARRER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            onPressed: () => setState(() { _isNavigating = true; _follow = true; }),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)),
+            child: Row(children: [
+              Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              IconButton(icon: const Icon(Icons.close, color: Colors.red, size: 20), padding: EdgeInsets.zero, constraints: const BoxConstraints(), onPressed: () => setState(() { _route = []; _waypoints.clear(); _remDist = 0; })),
+            ]),
+          ),
+        ]),
+        if (_route.isEmpty) _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey.shade800, () {
+          setState(() => _isRec = !_isRec);
+          if (!_isRec) _saveTraceGPX();
+        }),
+      ],
+    );
+  }
+
+  // HUD quand on roule (Navigation)
+  Widget _buildNavHud() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.orange, width: 2)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Icon(Icons.navigation, color: Colors.orange, size: 30),
+          Text("${(_remDist/1000).toStringAsFixed(1)} KM Restants", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.white)),
+          IconButton(
+            icon: const Icon(Icons.stop_circle, color: Colors.red, size: 35),
+            onPressed: () => setState(() { _isNavigating = false; _mapController.rotate(0); }),
+          )
+        ],
+      ),
+    );
+  }
+
   void _showSettings() {
     final c = TextEditingController(text: _sosContacts.isNotEmpty ? _sosContacts.first : "");
     showDialog(context: context, builder: (ctx) => AlertDialog(
