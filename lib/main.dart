@@ -4,9 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
 import 'dart:io';
-import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'routing_service.dart';
 import 'poi_service.dart';
@@ -29,7 +27,7 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
-  LatLng _currentPos = const LatLng(43.5478, 3.7388); // Cournonterral
+  LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isRec = false, _loading = false;
   
@@ -94,7 +92,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _sendSOS() async {
     if (_sosContacts.isEmpty) { _showSettings(); return; }
-    final msg = "URGENT 4X4 - Aide demandée ! Position : http://maps.google.com/?q=${_currentPos.latitude},${_currentPos.longitude}";
+    final msg = "URGENT 4X4 - J'ai besoin d'aide ! Position : https://www.google.com/search?q=https://maps.google.com/%3Fq%3D${_currentPos.latitude},${_currentPos.longitude}";
     for (var c in _sosContacts) {
       final uri = Uri.parse("sms:$c?body=${Uri.encodeComponent(msg)}");
       await launchUrl(uri);
@@ -149,24 +147,24 @@ class _MapScreenState extends State<MapScreen> {
                 decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.cyanAccent)),
                 child: Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
               ),
-              _btnIcon(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey[800], () { setState(() => _isRec = !_isRec); if(!_isRec) _saveTrace(); }, "rec"),
+              _btnIcon(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : (Colors.grey[800] ?? Colors.grey), () { setState(() => _isRec = !_isRec); if(!_isRec) _saveTrace(); }, "rec"),
             ],
           )),
-          // POI BARRE (Gauche)
+          // POI BARRE
           Positioned(left: 10, top: 120, child: Column(children: [
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("water", Icons.water_drop, Colors.blue),
             _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
-          // BOUTONS (Droite)
+          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btnIcon(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat), "sat"),
             const SizedBox(height: 10),
-            _btnIcon(Icons.gps_fixed, _follow ? Colors.orange : Colors.grey[800], () => setState(() => _follow = true), "gps"),
+            _btnIcon(Icons.gps_fixed, _follow ? Colors.orange : (Colors.grey[800] ?? Colors.grey), () => setState(() => _follow = true), "gps"),
             const SizedBox(height: 10),
             _btnIcon(Icons.settings, Colors.black87, _showSettings, "set"),
           ])),
-          // DASHBOARD BAS
+          // DASHBOARD
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 100, color: Colors.black,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -182,35 +180,13 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btnIcon(IconData i, Color b, VoidCallback o, String h) => FloatingActionButton(mini: true, heroTag: h, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-
-  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), 
-    child: FloatingActionButton(mini: true, heroTag: t, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, 
-    onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
-
+  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(mini: true, heroTag: t, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   IconData _poiIcon(String t) => t == 'fuel' ? Icons.local_gas_station : (t == 'water' ? Icons.water_drop : Icons.terrain);
   Color _poiColor(String t) => t == 'fuel' ? Colors.yellow : (t == 'water' ? Colors.blue : Colors.green);
-
-  String _getDir(double h) {
-    if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE";
-    if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO";
-  }
-  Widget _dash(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    Text(v, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: c)),
-    Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-  ]);
-
+  String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
+  Widget _dash(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   void _showSettings() {
     final c = TextEditingController();
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text("Contact SOS"),
-      content: TextField(controller: c, keyboardType: TextInputType.phone, decoration: const InputDecoration(hintText: "0612345678")),
-      actions: [TextButton(onPressed: () async {
-        if(c.text.isEmpty) return;
-        _sosContacts = [c.text];
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setStringList('sos_contacts', _sosContacts);
-        Navigator.pop(ctx);
-      }, child: const Text("Sauvegarder"))],
-    ));
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Contact SOS"), content: TextField(controller: c, keyboardType: TextInputType.phone, decoration: const InputDecoration(hintText: "0612345678")), actions: [TextButton(onPressed: () async { if(c.text.isEmpty) return; _sosContacts = [c.text]; final prefs = await SharedPreferences.getInstance(); await prefs.setStringList('sos_contacts', _sosContacts); Navigator.pop(ctx); }, child: const Text("Sauvegarder"))]));
   }
 }

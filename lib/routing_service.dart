@@ -12,8 +12,8 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // SCRIPT 4X4 SUR MESURE : On baisse le coût des pistes (track) 
-    // et on augmente celui des routes (primary/secondary)
+    // SCRIPT DE COÛT PERSONNALISÉ
+    // On pénalise l'asphalte (coût 50) et on favorise les pistes (coût 1.1)
     const customProfile = '''
 --- context:global ---
 assign track_priority = 1.0
@@ -21,33 +21,39 @@ assign track_priority = 1.0
 assign costfactor
   if highway=motorway|motorway_link then 100
   else if highway=trunk|trunk_link then 50
-  else if highway=primary|primary_link then 20
-  else if highway=secondary|secondary_link then 10
-  else if highway=tertiary|tertiary_link then 5
+  else if highway=primary|primary_link then 30
+  else if highway=secondary|secondary_link then 15
   else if highway=track then 1.1
-  else if highway=service|residential|unclassified then 2.0
-  else 1000
+  else if highway=service|residential|unclassified then 2.5
+  else 100
 ''';
 
     final url = Uri.parse('https://brouter.de/brouter')
         .replace(queryParameters: {
       'lonlats': '${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}',
-      'profile': 'moped', // On part du moped mais on injecte nos règles :
+      'profile': 'moped', 
       'alternativeidx': '0',
       'format': 'geojson',
-    }).toString() + '&customprofile=${Uri.encodeComponent(customProfile)}';
+      'customprofile': customProfile,
+    });
     
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(url);
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
+        
+        // FIX : Erreur toDouble() - On transforme tout en String avant de parser
         final rawDist = feature['properties']['track-length'];
         final double dist = double.tryParse(rawDist.toString()) ?? 0.0;
-        return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
+        
+        final points = coords.map((p) => LatLng(p[1], p[0])).toList();
+        return RouteData(points, dist);
       }
-    } catch (e) { print('Erreur BRouter: $e'); }
+    } catch (e) {
+      print('Erreur BRouter: $e');
+    }
     return null;
   }
 }
