@@ -56,8 +56,7 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  // RECHERCHE D'ADRESSE ET CALCUL OFF-ROAD
-  Future<void> _searchAndRoute(String address) async {
+  Future<void> _searchAddress(String address) async {
     setState(() => _loading = true);
     try {
       final res = await http.get(Uri.parse('https://nominatim.openstreetmap.org/search?q=$address&format=json&limit=1'), headers: {'User-Agent': 'Trail4x4'});
@@ -97,29 +96,26 @@ class _MapScreenState extends State<MapScreen> {
               ]),
             ],
           ),
-          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _btn(Icons.search, Colors.cyan[700]!, () {
                 final c = TextEditingController();
                 showDialog(context: context, builder: (ctx) => AlertDialog(
-                  title: const Text("Destination"),
-                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ville, Village, Lieu-dit")),
-                  actions: [TextButton(onPressed: () { _searchAndRoute(c.text); Navigator.pop(ctx); }, child: const Text("TRACER"))],
+                  title: const Text("Aller à :"),
+                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Pignan, Village...")),
+                  actions: [TextButton(onPressed: () { _searchAddress(c.text); Navigator.pop(ctx); }, child: const Text("OK"))],
                 ));
               }),
-              if (_route.isNotEmpty) _navInfo(),
+              if (_route.isNotEmpty) Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM")),
               _btn(Icons.close, Colors.red, () => setState(() => _route = [])),
             ],
           )),
-          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
             _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, () { setState(() => _follow = true); _mapController.move(_currentPos, 15); }),
           ])),
-          // DASHBOARD
           Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
@@ -128,7 +124,6 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _navInfo() => Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM"));
   Widget _dash() => Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
     _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
     _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
