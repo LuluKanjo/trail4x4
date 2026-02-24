@@ -14,18 +14,20 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints) async {
     if (waypoints.length < 2) return null;
 
-    // On transforme la liste des points en format BRouter : lon,lat|lon,lat|...
     final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
 
+    // SCRIPT ULTRA-PERMISSIF : 
+    // On ignore les accès restreints et on donne un coût dérisoire aux chemins
     const customProfile = '''
 --- context:global ---
 assign track_priority = 0.1
 --- context:way ---
+assign is_forbidden = 0
 assign costfactor
-  if highway=track then 1.0
-  else if highway=motorway|motorway_link|trunk|trunk_link then 100
-  else if highway=primary|primary_link|secondary|secondary_link then 50
-  else if highway=tertiary|tertiary_link then 10
+  if highway=track|path|unclassified then 1.0
+  else if highway=motorway|motorway_link|trunk|trunk_link then 500
+  else if highway=primary|primary_link|secondary|secondary_link then 200
+  else if highway=tertiary|tertiary_link then 50
   else 2.0
 ''';
 

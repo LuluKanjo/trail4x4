@@ -74,8 +74,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _addWaypoint(LatLng point) async {
     setState(() { _loading = true; _waypoints.add(point); });
-    final List<LatLng> fullPath = [_currentPos, ..._waypoints];
-    final data = await _routing.getOffRoadRoute(fullPath);
+    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints]);
     if (data != null) {
       setState(() { _route = data.points; _remDist = data.distance; });
     }
@@ -84,6 +83,12 @@ class _MapScreenState extends State<MapScreen> {
 
   void _clearRoute() {
     setState(() { _route = []; _waypoints.clear(); _remDist = 0; });
+  }
+
+  void _recenter() {
+    setState(() => _follow = true);
+    _mapController.move(_currentPos, 15);
+    _mapController.rotate(0);
   }
 
   void _togglePOI(String type) async {
@@ -98,7 +103,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _sendSOS() async {
     if (_sosContacts.isEmpty) { _showSettings(); return; }
-    final msg = "URGENT 4X4 - Aide demandée ! Position : http://google.com/maps?q=${_currentPos.latitude},${_currentPos.longitude}";
+    final msg = "URGENT 4X4 - Aide demandée ! Position : http://googleusercontent.com/maps.google.com/7{_currentPos.latitude},${_currentPos.longitude}";
     for (var c in _sosContacts) {
       final uri = Uri.parse("sms:$c?body=${Uri.encodeComponent(msg)}");
       await launchUrl(uri);
@@ -133,6 +138,7 @@ class _MapScreenState extends State<MapScreen> {
               ]),
             ],
           ),
+          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -140,23 +146,26 @@ class _MapScreenState extends State<MapScreen> {
               if (_route.isNotEmpty) Column(children: [
                 _navInfo(),
                 const SizedBox(height: 5),
-                GestureDetector(onTap: _clearRoute, child: Container(padding: const EdgeInsets.all(5), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(5)), child: const Text("EFFACER", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))),
+                GestureDetector(onTap: _clearRoute, child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(10)), child: const Text("EFFACER", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))),
               ]),
               _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : (Colors.grey[800] ?? Colors.grey), () => setState(() => _isRec = !_isRec)),
             ],
           )),
+          // POI BARRE (Gauche)
           Positioned(left: 10, top: 120, child: Column(children: [
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("water", Icons.water_drop, Colors.blue),
             _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
+          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            _btn(Icons.gps_fixed, _follow ? Colors.orange : (Colors.grey[800] ?? Colors.grey), () => setState(() => _follow = true)),
+            _btn(Icons.my_location, _follow ? Colors.orange : (Colors.grey[800] ?? Colors.grey), _recenter),
             const SizedBox(height: 10),
             _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
+          // DASHBOARD BAS
           Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
@@ -176,21 +185,16 @@ class _MapScreenState extends State<MapScreen> {
   ]));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
-  
   void _showSettings() {
     final c = TextEditingController();
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text("Contact SOS"), 
-      content: TextField(controller: c, keyboardType: TextInputType.phone), 
-      actions: [TextButton(onPressed: () async { 
-        if(c.text.isEmpty) return; 
-        final navigator = Navigator.of(ctx); // On capture le navigator avant le await
-        final prefs = await SharedPreferences.getInstance(); 
-        await prefs.setStringList('sos_contacts', [c.text]);
-        if (!mounted) return;
-        setState(() => _sosContacts = [c.text]);
-        navigator.pop(); // Utilisation sécurisée
-      }, child: const Text("OK"))]
-    ));
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Contact SOS"), content: TextField(controller: c, keyboardType: TextInputType.phone), actions: [TextButton(onPressed: () async { 
+      if(c.text.isEmpty) return; 
+      final nav = Navigator.of(ctx);
+      final prefs = await SharedPreferences.getInstance(); 
+      await prefs.setStringList('sos_contacts', [c.text]);
+      if (!mounted) return;
+      setState(() => _sosContacts = [c.text]);
+      nav.pop(); 
+    }, child: const Text("OK"))]));
   }
 }
