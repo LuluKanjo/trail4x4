@@ -15,29 +15,33 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> forbiddenZones) async {
     if (waypoints.length < 2) return null;
 
-    final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
-    final String noGo = forbiddenZones.map((p) => '${p.longitude},${p.latitude},50').join('|');
+    // OSRM demande la longitude en premier : lon,lat;lon,lat
+    final String coordinates = waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
 
-    // LE SECRET : Le profil "bicycle" passe sur tous les chemins de terre, même "interdits" aux moteurs.
-    String url = 'https://brouter.de/brouter?lonlats=$lonLats&profile=bicycle&alternativeidx=0&format=geojson';
-    if (noGo.isNotEmpty) url += '&nogo=$noGo';
+    // MOTEUR OSRM - Profil VÉLO (bike)
+    // Il est d'une stabilité à toute épreuve et s'engouffre dans tous les pointillés marrons.
+    final url = 'https://router.project-osrm.org/route/v1/bike/$coordinates?overview=full&geometries=geojson';
 
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        if (data['features'] != null && data['features'].isNotEmpty) {
-          final feature = data['features'][0];
-          final coords = feature['geometry']['coordinates'] as List;
-          final double dist = double.tryParse(feature['properties']['track-length'].toString()) ?? 0.0;
-          return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
+        if (data['code'] == 'Ok' && data['routes'] != null && data['routes'].isNotEmpty) {
+          final route = data['routes'][0];
+          final geometry = route['geometry']['coordinates'] as List;
+          final double dist = (route['distance'] as num).toDouble();
+
+          // OSRM renvoie [longitude, latitude], on convertit pour Flutter
+          final List<LatLng> points = geometry.map((p) => LatLng(p[1], p[0])).toList();
+          return RouteData(points, dist);
         }
       } else {
-        debugPrint("Erreur BRouter: ${response.statusCode}");
+        debugPrint("Erreur OSRM: ${response.statusCode}");
       }
     } catch (e) {
       debugPrint("Erreur réseau: $e");
     }
-    return null; 
+    
+    return null;
   }
 }
