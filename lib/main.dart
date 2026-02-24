@@ -10,9 +10,11 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 
-// LES DEUX NOUVELLES OPTIONS
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:flutter_map_cache/flutter_map_cache.dart';
+import 'package:dio_cache_interceptor_hive_store/dio_cache_interceptor_hive_store.dart';
 
 import 'routing_service.dart';
 import 'poi_service.dart';
@@ -45,10 +47,17 @@ class _MapScreenState extends State<MapScreen> {
   bool _isNavigating = false; 
   String _weather = "--°C";
   
+  HiveCacheStore? _cacheStore;
+  
+  // VARIABLES INCLINOMÈTRE ET CALIBRATION
+  double _rawPitch = 0.0, _rawRoll = 0.0;
+  double _pitchOffset = 0.0, _rollOffset = 0.0;
+  double _pitch = 0.0, _roll = 0.0;
+
   List<LatLng> _route = [];
   final List<LatLng> _waypoints = [];
   final List<LatLng> _trace = [];
-  List<LatLng> _importedTrace = []; // LA NOUVELLE TRACE IMPORTÉE
+  List<LatLng> _importedTrace = []; 
   final List<LatLng> _forbiddenZones = [];
   final List<POI> _pois = [];
   
@@ -60,8 +69,19 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
-    // OPTION 1 : ANTI-VEILLE ACTIVÉ 🔋
     WakelockPlus.enable(); 
+    _initCache(); 
+    
+    accelerometerEventStream().listen((AccelerometerEvent event) {
+      if (!mounted) return;
+      setState(() {
+        _rawRoll = math.atan2(event.x, event.y) * -180 / math.pi;
+        _rawPitch = math.atan2(event.z, event.y) * 180 / math.pi;
+        // On soustrait l'angle de base pour avoir un vrai zéro
+        _roll = _rawRoll - _rollOffset;
+        _pitch = _rawPitch - _pitchOffset;
+      });
+    });
 
     _routing = RoutingService('');
     _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
@@ -70,8 +90,18 @@ class _MapScreenState extends State<MapScreen> {
     _startTracking();
   }
 
+  Future<void> _initCache() async {
+    final dir = await getApplicationDocumentsDirectory();
+    if (mounted) setState(() => _cacheStore = HiveCacheStore(dir.path));
+  }
+
   void _loadData() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // CHARGEMENT DE LA CALIBRATION MÉMORISÉE
+    _rollOffset = prefs.getDouble('roll_offset') ?? 0.0;
+    _pitchOffset = prefs.getDouble('pitch_offset') ?? 0.0;
+
     setState(() => _sosContacts = prefs.getStringList('sos_contacts') ?? []);
     final savedZones = prefs.getStringList('forbidden_zones') ?? [];
     if (savedZones.isNotEmpty) {
@@ -84,6 +114,18 @@ class _MapScreenState extends State<MapScreen> {
     }
     _weather = await _weatherService.getCurrentWeather(_currentPos.latitude, _currentPos.longitude);
     if (mounted) setState(() {});
+  }
+
+  // FONCTION DE CALIBRATION MANUELLE
+  void _calibrateInclinometer() async {
+    setState(() {
+      _rollOffset = _rawRoll;
+      _pitchOffset = _rawPitch;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('roll_offset', _rollOffset);
+    await prefs.setDouble('pitch_offset', _pitchOffset);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Inclinomètre calibré au point zéro !"), backgroundColor: Colors.green));
   }
 
   void _startTracking() async {
@@ -143,18 +185,14 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _loading = false);
   }
 
-  // OPTION 2 : LE LECTEUR DE FICHIER GPX 🗺️
   Future<void> _loadGPX() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
       if (result != null && result.files.single.path != null) {
         File file = File(result.files.single.path!);
         String contents = await file.readAsString();
-        
-        // On scanne le fichier pour trouver toutes les coordonnées
         RegExp tagExp = RegExp(r'<trkpt([^>]+)>');
         Iterable<RegExpMatch> matches = tagExp.allMatches(contents);
-        
         List<LatLng> newTrace = [];
         for (var m in matches) {
           String attrs = m.group(1) ?? '';
@@ -162,26 +200,17 @@ class _MapScreenState extends State<MapScreen> {
           RegExp lonExp = RegExp(r'lon="([^"]+)"');
           String? latStr = latExp.firstMatch(attrs)?.group(1);
           String? lonStr = lonExp.firstMatch(attrs)?.group(1);
-          
-          if (latStr != null && lonStr != null) {
-            newTrace.add(LatLng(double.parse(latStr), double.parse(lonStr)));
-          }
+          if (latStr != null && lonStr != null) newTrace.add(LatLng(double.parse(latStr), double.parse(lonStr)));
         }
-        
         if (newTrace.isNotEmpty) {
-          setState(() {
-            _importedTrace = newTrace;
-            _follow = false; // On lâche la caméra pour que tu puisses voir la trace
-          });
-          _mapController.move(newTrace.first, 13); // On zoome sur le départ de la trace
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Trace chargée (${newTrace.length} points) !"), backgroundColor: Colors.green));
+          setState(() { _importedTrace = newTrace; _follow = false; });
+          _mapController.move(newTrace.first, 13);
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Trace chargée (${newTrace.length} pts) !"), backgroundColor: Colors.green));
         } else {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aucun point valide trouvé dans ce fichier.")));
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fichier GPX invalide.")));
         }
       }
-    } catch (e) {
-      debugPrint("Erreur GPX: $e");
-    }
+    } catch (e) { debugPrint("Erreur GPX: $e"); }
   }
 
   void _addForbiddenZone() async {
@@ -225,6 +254,27 @@ class _MapScreenState extends State<MapScreen> {
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 
+  Widget _buildInclinometer(String label, double angle, IconData icon) {
+    bool danger = angle.abs() > 30; 
+    return Container(
+      width: 65,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: danger ? Colors.red : Colors.orange, width: danger ? 3 : 1)),
+      child: Column(
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
+          Transform.rotate(
+            angle: angle * math.pi / 180,
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 5),
+          Text("${angle.abs().toStringAsFixed(0)}°", style: TextStyle(color: danger ? Colors.red : Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -243,12 +293,10 @@ class _MapScreenState extends State<MapScreen> {
                 urlTemplate: _isSat 
                   ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
               ),
-              // TRACE DU COPAIN (VIOLET)
               if (_importedTrace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _importedTrace, color: Colors.purpleAccent, strokeWidth: 6)]),
-              // LIGNE DE GUIDAGE (CYAN)
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
-              // TA PROPRE TRACE ENREGISTRÉE (ORANGE)
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               
               MarkerLayer(markers: [
@@ -269,6 +317,15 @@ class _MapScreenState extends State<MapScreen> {
           
           Positioned(top: 40, left: 10, right: 10, child: _isNavigating ? _buildNavHud() : _buildStandardHud()),
 
+          Positioned(top: 100, right: 15, child: Column(children: [
+            _buildInclinometer("ROULIS", _roll, Icons.screen_rotation),
+            const SizedBox(height: 10),
+            _buildInclinometer("TANGAGE", _pitch, Icons.swap_vert),
+            const SizedBox(height: 10),
+            // LE BOUTON DE CALIBRATION "TARE"
+            _btn(Icons.exposure_zero, Colors.blueGrey, _calibrateInclinometer),
+          ])),
+
           if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(children: [
             Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
@@ -287,12 +344,11 @@ class _MapScreenState extends State<MapScreen> {
                 final c = TextEditingController();
                 showDialog(context: context, builder: (ctx) => AlertDialog(
                   title: const Text("Naviguer vers :"),
-                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Pignan, Adresse...")),
+                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ville, Adresse...")),
                   actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _searchAddress(c.text); nav.pop(); }, child: const Text("GO"))],
                 ));
               }),
               const SizedBox(height: 10),
-              // LE BOUTON DOSSIER POUR OUVRIR UN FICHIER GPX
               _btn(Icons.folder_open, Colors.blueAccent, _loadGPX),
               const SizedBox(height: 10),
             ],
