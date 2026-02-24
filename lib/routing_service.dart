@@ -12,7 +12,8 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=car-eco&alternativeidx=0&format=geojson';
+    // Profil moped : il adore les pistes et chemins légaux
+    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=moped&alternativeidx=0&format=geojson';
     
     try {
       final response = await http.get(Uri.parse(url));
@@ -21,9 +22,9 @@ class RoutingService {
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
         
-        // LA CORRECTION EST ICI : on force la transformation du texte en nombre
+        // Fix pour l'erreur "String has no method toDouble"
         final rawDist = feature['properties']['track-length'];
-        final double dist = double.parse(rawDist.toString());
+        final double dist = double.tryParse(rawDist.toString()) ?? 0.0;
         
         final points = coords.map((p) => LatLng(p[1], p[0])).toList();
         return RouteData(points, dist);
