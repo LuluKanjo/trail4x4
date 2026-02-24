@@ -12,35 +12,37 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest, List<LatLng> forbiddenZones) async {
-    // Formatage de tes zones interdites (rayon de 50 mètres)
     final String noGo = forbiddenZones.map((p) => '${p.longitude},${p.latitude},50').join('|');
 
-    // PROFIL 4X4 ROAD TRIP STRICT
-    // On cherche les pistes (track) larges. On limite le goudron aux liaisons.
+    // LE PROFIL "LIBERTÉ TOTALE"
+    // On ignore les lois (grâce à la base vélo)
+    // On détruit le score du goudron, on valorise la terre à 100%
+    // On s'assure juste de ne pas finir sur un sentier piéton (footway/path)
     const customProfile = '''
 --- context:global ---
-assign track_priority = 0.1
+assign track_priority = 1.0
 --- context:way ---
-assign is_track = if highway=track then 1 else 0
-assign is_liaison = if highway=unclassified|tertiary|secondary then 1 else 0
-assign is_bad_idea = if highway=motorway|trunk|primary|path|footway then 1 else 0
+assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
+assign is_too_small = if highway=path|footway|steps|pedestrian|cycleway then 1 else 0
 
 assign costfactor
-  if is_bad_idea then 10000.0
-  else if is_track then 1.0
-  else if is_liaison then 50.0
-  else 100.0
+  if is_too_small then 10000.0
+  else if highway=track then 1.0
+  else if is_paved then 5000.0
+  else if highway=motorway|trunk|primary|secondary then 10000.0
+  else 10.0
 ''';
 
     final queryParams = {
       'lonlats': '${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}',
-      'profile': 'car-eco', // Base voiture pour le respect du gabarit et de la loi
+      // LE SECRET EST ICI : Le profil vélo voit TOUS les chemins forestiers
+      'profile': 'bicycle', 
       'alternativeidx': '0',
       'format': 'geojson',
       'customprofile': customProfile,
     };
     
-    // Ajout de tes interdictions manuelles
+    // On intègre tes propres zones interdites posées à la main
     if (noGo.isNotEmpty) queryParams['nogo'] = noGo;
 
     try {
@@ -52,7 +54,7 @@ assign costfactor
         final double dist = double.tryParse(feature['properties']['track-length'].toString()) ?? 0.0;
         return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
       }
-    } catch (e) { print('Erreur: $e'); }
+    } catch (e) { print('Erreur BRouter: $e'); }
     return null;
   }
 }
