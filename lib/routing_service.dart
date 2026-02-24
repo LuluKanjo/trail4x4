@@ -11,28 +11,30 @@ class RouteData {
 class RoutingService {
   RoutingService(String _); 
 
-  Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // PROFIL RAID 4X4 : Inspiré des meilleurs fichiers OsmAnd
-    // On favorise : tracktype grade1/2/3, surface=unpaved/gravel/earth
-    // On pénalise lourdement : asphalt, concrete, et les axes principaux
+  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints) async {
+    if (waypoints.length < 2) return null;
+
+    final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
+
+    // PROFIL RADICAL "DEFENDER 110"
+    // On ignore les accès (is_forbidden=0)
+    // On met un coût de 10 000 sur l'asphalte (énorme !)
     const customProfile = '''
 --- context:global ---
-assign track_priority = 0.05
+assign track_priority = 0.01
 --- context:way ---
-assign is_unpaved = if surface=unpaved|gravel|dirt|earth|ground then 1 else 0
-assign is_track = if highway=track then 1 else 0
+assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
+assign is_road = if highway=motorway|trunk|primary|secondary|tertiary then 1 else 0
 
 assign costfactor
-  if is_track then (if tracktype=grade1|grade2|grade3 then 1.0 else 1.5)
-  else if surface=asphalt|paved|concrete then 100.0
-  else if highway=motorway|trunk|primary then 500.0
-  else if highway=secondary|tertiary then 50.0
+  if highway=track then 1.0
+  else if is_paved then 10000.0
+  else if is_road then 5000.0
   else 2.0
 ''';
 
-    final url = Uri.parse('https://brouter.de/brouter')
-        .replace(queryParameters: {
-      'lonlats': '${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}',
+    final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: {
+      'lonlats': lonLats,
       'profile': 'moped', 
       'alternativeidx': '0',
       'format': 'geojson',

@@ -28,6 +28,7 @@ class _MapScreenState extends State<MapScreen> {
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _loading = false;
   List<LatLng> _route = [];
+  final List<LatLng> _waypoints = [];
   late RoutingService _routing;
 
   @override
@@ -56,6 +57,14 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  Future<void> _updateRoute([LatLng? dest]) async {
+    setState(() => _loading = true);
+    if (dest != null) _waypoints.add(dest);
+    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints]);
+    if (data != null) setState(() { _route = data.points; _remDist = data.distance; });
+    setState(() => _loading = false);
+  }
+
   Future<void> _searchAddress(String address) async {
     setState(() => _loading = true);
     try {
@@ -63,10 +72,7 @@ class _MapScreenState extends State<MapScreen> {
       final data = json.decode(res.body);
       if (data.isNotEmpty) {
         final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-        final routeData = await _routing.getOffRoadRoute(_currentPos, dest);
-        if (routeData != null) {
-          setState(() { _route = routeData.points; _remDist = routeData.distance; _follow = true; });
-        }
+        _updateRoute(dest);
       }
     } catch (e) { print(e); }
     setState(() => _loading = false);
@@ -82,6 +88,7 @@ class _MapScreenState extends State<MapScreen> {
             options: MapOptions(
               initialCenter: _currentPos, initialZoom: 15,
               onPositionChanged: (p, g) { if(g) setState(() => _follow = false); },
+              onLongPress: (tp, ll) => _updateRoute(ll),
             ),
             children: [
               TileLayer(
@@ -92,10 +99,12 @@ class _MapScreenState extends State<MapScreen> {
               ),
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)]),
               MarkerLayer(markers: [
+                ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(point: _currentPos, width: 60, height: 60, child: const Icon(Icons.navigation, color: Colors.orange, size: 50)),
               ]),
             ],
           ),
+          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -108,13 +117,18 @@ class _MapScreenState extends State<MapScreen> {
                 ));
               }),
               if (_route.isNotEmpty) Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM")),
-              _btn(Icons.close, Colors.red, () => setState(() => _route = [])),
+              _btn(Icons.delete_sweep, Colors.red, () => setState(() { _route = []; _waypoints.clear(); })),
             ],
           )),
+          // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, () { setState(() => _follow = true); _mapController.move(_currentPos, 15); }),
+            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, () { 
+              setState(() => _follow = true); 
+              _mapController.move(_currentPos, 15);
+              _mapController.rotate(0);
+            }),
           ])),
           Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
