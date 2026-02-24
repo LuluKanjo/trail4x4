@@ -12,23 +12,25 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest) async {
-    // Utilisation de l'API BRouter communautaire
-    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=trekking&alternativeidx=0&format=geojson';
+    final url = 'https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}&profile=car-eco&alternativeidx=0&format=geojson';
     
     try {
-      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final feature = data['features'][0];
         final coords = feature['geometry']['coordinates'] as List;
-        final double dist = feature['properties']['track-length'].toDouble();
+        
+        // LA CORRECTION EST ICI : on force la transformation du texte en nombre
+        final rawDist = feature['properties']['track-length'];
+        final double dist = double.parse(rawDist.toString());
+        
         final points = coords.map((p) => LatLng(p[1], p[0])).toList();
         return RouteData(points, dist);
-      } else {
-        throw "Serveur BRouter Erreur: ${response.statusCode}";
       }
     } catch (e) {
-      throw "BRouter indisponible: $e";
+      print('Erreur BRouter: $e');
     }
+    return null;
   }
 }
