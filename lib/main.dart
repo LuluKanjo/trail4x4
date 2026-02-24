@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'routing_service.dart';
 
 void main() => runApp(const Trail4x4App());
@@ -26,9 +27,7 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _loading = false;
-  
   List<LatLng> _route = [];
-  final List<LatLng> _waypoints = [];
   late RoutingService _routing;
 
   @override
@@ -48,9 +47,7 @@ class _MapScreenState extends State<MapScreen> {
         _speed = pos.speed * 3.6;
         _alt = pos.altitude;
         _head = pos.heading;
-        if (_route.isNotEmpty) {
-          _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
-        }
+        if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
       });
       if (_follow) {
         _mapController.move(_currentPos, _mapController.camera.zoom);
@@ -59,24 +56,21 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  Future<void> _updateRoute() async {
-    if (_waypoints.isEmpty) return;
+  // RECHERCHE D'ADRESSE ET CALCUL OFF-ROAD
+  Future<void> _searchAndRoute(String address) async {
     setState(() => _loading = true);
-    // On calcule toujours depuis la position actuelle vers tous les points posés
-    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints]);
-    if (data != null) {
-      setState(() {
-        _route = data.points;
-        _remDist = data.distance;
-      });
-    }
+    try {
+      final res = await http.get(Uri.parse('https://nominatim.openstreetmap.org/search?q=$address&format=json&limit=1'), headers: {'User-Agent': 'Trail4x4'});
+      final data = json.decode(res.body);
+      if (data.isNotEmpty) {
+        final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+        final routeData = await _routing.getOffRoadRoute(_currentPos, dest);
+        if (routeData != null) {
+          setState(() { _route = routeData.points; _remDist = routeData.distance; _follow = true; });
+        }
+      }
+    } catch (e) { print(e); }
     setState(() => _loading = false);
-  }
-
-  void _recenter() {
-    setState(() => _follow = true);
-    _mapController.move(_currentPos, 15);
-    _mapController.rotate(0);
   }
 
   @override
@@ -87,13 +81,8 @@ class _MapScreenState extends State<MapScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _currentPos, 
-              initialZoom: 15,
+              initialCenter: _currentPos, initialZoom: 15,
               onPositionChanged: (p, g) { if(g) setState(() => _follow = false); },
-              onLongPress: (tp, ll) {
-                setState(() => _waypoints.add(ll));
-                _updateRoute();
-              },
             ),
             children: [
               TileLayer(
@@ -102,11 +91,8 @@ class _MapScreenState extends State<MapScreen> {
                   ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                   : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
-              if (_route.isNotEmpty) PolylineLayer(polylines: [
-                Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)
-              ]),
+              if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)]),
               MarkerLayer(markers: [
-                ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent, size: 30))),
                 Marker(point: _currentPos, width: 60, height: 60, child: const Icon(Icons.navigation, color: Colors.orange, size: 50)),
               ]),
             ],
@@ -115,32 +101,26 @@ class _MapScreenState extends State<MapScreen> {
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _btn(Icons.delete_sweep, Colors.red, () {
-                setState(() { _route = []; _waypoints.clear(); _remDist = 0; });
+              _btn(Icons.search, Colors.cyan[700]!, () {
+                final c = TextEditingController();
+                showDialog(context: context, builder: (ctx) => AlertDialog(
+                  title: const Text("Destination"),
+                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ville, Village, Lieu-dit")),
+                  actions: [TextButton(onPressed: () { _searchAndRoute(c.text); Navigator.pop(ctx); }, child: const Text("TRACER"))],
+                ));
               }),
-              if (_route.isNotEmpty) Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)),
-                child: Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(width: 40), // Equilibre visuel
+              if (_route.isNotEmpty) _navInfo(),
+              _btn(Icons.close, Colors.red, () => setState(() => _route = [])),
             ],
           )),
           // BOUTONS DROITE
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
             const SizedBox(height: 10),
-            _btn(Icons.my_location, _follow ? Colors.orange : (Colors.grey[800] ?? Colors.grey), _recenter),
+            _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey[800]!, () { setState(() => _follow = true); _mapController.move(_currentPos, 15); }),
           ])),
           // DASHBOARD
-          Positioned(bottom: 0, left: 0, right: 0, child: Container(
-            height: 90, color: Colors.black,
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
-              _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
-              _stat(_getDir(_head), "CAP", Colors.cyanAccent),
-            ]),
-          )),
+          Positioned(bottom: 0, left: 0, right: 0, child: _dash()),
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
       ),
@@ -148,12 +128,12 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)),
-    Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))
-  ]);
-  String _getDir(double h) {
-    if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE";
-    if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO";
-  }
+  Widget _navInfo() => Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)), child: Text("${(_remDist/1000).toStringAsFixed(1)} KM"));
+  Widget _dash() => Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+    _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
+    _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
+    _stat(_getDir(_head), "CAP", Colors.cyanAccent),
+  ]));
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
+  String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 }
