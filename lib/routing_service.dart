@@ -12,49 +12,46 @@ class RoutingService {
   RoutingService(String _); 
 
   Future<RouteData?> getOffRoadRoute(LatLng start, LatLng dest, List<LatLng> forbiddenZones) async {
+    // On prépare tes zones interdites posées à la main (points rouges)
     final String noGo = forbiddenZones.map((p) => '${p.longitude},${p.latitude},50').join('|');
 
-    // LE PROFIL "LIBERTÉ TOTALE"
-    // On ignore les lois (grâce à la base vélo)
-    // On détruit le score du goudron, on valorise la terre à 100%
-    // On s'assure juste de ne pas finir sur un sentier piéton (footway/path)
-    const customProfile = '''
---- context:global ---
-assign track_priority = 1.0
---- context:way ---
-assign is_paved = if surface=asphalt|paved|concrete then 1 else 0
-assign is_too_small = if highway=path|footway|steps|pedestrian|cycleway then 1 else 0
-
-assign costfactor
-  if is_too_small then 10000.0
-  else if highway=track then 1.0
-  else if is_paved then 5000.0
-  else if highway=motorway|trunk|primary|secondary then 10000.0
-  else 10.0
-''';
-
+    // ON UTILISE LE PROFIL OFFICIEL 'trekking' DU SERVEUR
+    // Il est programmé pour fuir les routes et privilégier la nature et la terre.
     final queryParams = {
       'lonlats': '${start.longitude},${start.latitude}|${dest.longitude},${dest.latitude}',
-      // LE SECRET EST ICI : Le profil vélo voit TOUS les chemins forestiers
-      'profile': 'bicycle', 
+      'profile': 'trekking', 
       'alternativeidx': '0',
       'format': 'geojson',
-      'customprofile': customProfile,
     };
     
-    // On intègre tes propres zones interdites posées à la main
+    // On ajoute tes interdictions manuelles si tu en as posé
     if (noGo.isNotEmpty) queryParams['nogo'] = noGo;
 
+    final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: queryParams);
+    
     try {
-      final response = await http.get(Uri.parse('https://brouter.de/brouter').replace(queryParameters: queryParams));
+      final response = await http.get(url);
+      
+      // Si le serveur répond bien (code 200)
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final feature = data['features'][0];
-        final coords = feature['geometry']['coordinates'] as List;
-        final double dist = double.tryParse(feature['properties']['track-length'].toString()) ?? 0.0;
-        return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
+        
+        // On vérifie qu'un tracé a bien été trouvé
+        if (data['features'] != null && data['features'].isNotEmpty) {
+          final feature = data['features'][0];
+          final coords = feature['geometry']['coordinates'] as List;
+          final double dist = double.tryParse(feature['properties']['track-length'].toString()) ?? 0.0;
+          
+          return RouteData(coords.map((p) => LatLng(p[1], p[0])).toList(), dist);
+        }
+      } else {
+        print('Erreur serveur BRouter: ${response.statusCode}');
       }
-    } catch (e) { print('Erreur BRouter: $e'); }
-    return null;
+    } catch (e) { 
+      print('Erreur connexion: $e'); 
+    }
+    
+    // Si on arrive ici, c'est qu'il n'y a vraiment aucun chemin (ou une rivière à traverser sans pont)
+    return null; 
   }
 }
