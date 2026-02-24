@@ -36,10 +36,10 @@ class _MapScreenState extends State<MapScreen> {
   String _weather = "--°C";
   
   List<LatLng> _route = [];
+  final List<LatLng> _waypoints = [];
   final List<LatLng> _trace = [];
   final List<LatLng> _forbiddenZones = [];
   final List<POI> _pois = [];
-  LatLng? _destination;
   
   late RoutingService _routing;
   late POIService _poiService;
@@ -52,18 +52,24 @@ class _MapScreenState extends State<MapScreen> {
     _routing = RoutingService('');
     _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
     _weatherService = WeatherService();
-    _loadPrefs();
+    _loadData();
     _startTracking();
   }
 
-  void _loadPrefs() async {
+  void _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() => _sosContacts = prefs.getStringList('sos_contacts') ?? []);
     final savedZones = prefs.getStringList('forbidden_zones') ?? [];
-    for (var s in savedZones) {
-      final parts = s.split(',');
-      _forbiddenZones.add(LatLng(double.parse(parts[0]), double.parse(parts[1])));
+    if (savedZones.isNotEmpty) {
+      setState(() {
+        _forbiddenZones.addAll(savedZones.map((s) {
+          final parts = s.split(',');
+          return LatLng(double.parse(parts[0]), double.parse(parts[1]));
+        }));
+      });
     }
+    _weather = await _weatherService.getCurrentWeather(_currentPos.latitude, _currentPos.longitude);
+    if (mounted) setState(() {});
   }
 
   void _startTracking() async {
@@ -84,20 +90,18 @@ class _MapScreenState extends State<MapScreen> {
         if (_speed > 3) _mapController.rotate(-_head);
       }
     });
-    // Maj Météo toutes les 30 min (simplifié ici au lancement)
-    _weather = await _weatherService.getCurrentWeather(_currentPos.latitude, _currentPos.longitude);
-    if (mounted) setState(() {});
   }
 
-  // --- ACTIONS PRINCIPALES ---
-
-  Future<void> _calculateRoute(LatLng dest) async {
-    setState(() { _loading = true; _destination = dest; });
-    final data = await _routing.getOffRoadRoute(_currentPos, dest, _forbiddenZones);
+  // --- MOTEUR DE CALCUL ---
+  Future<void> _updateRoute() async {
+    if (_waypoints.isEmpty) return;
+    setState(() => _loading = true);
+    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenZones);
     if (data != null) {
       setState(() { _route = data.points; _remDist = data.distance; _follow = true; });
     } else {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aucun tracé légal trouvé.")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Oups, aucun passage trouvé. Pose un point plus près.")));
+      setState(() { _route = []; _remDist = 0; });
     }
     setState(() => _loading = false);
   }
@@ -109,25 +113,22 @@ class _MapScreenState extends State<MapScreen> {
       final data = json.decode(res.body);
       if (data.isNotEmpty) {
         final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-        await _calculateRoute(dest);
+        setState(() => _waypoints.add(dest));
+        await _updateRoute();
+      } else {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lieu introuvable")));
       }
-    } catch (e) { print(e); }
+    } catch (e) { debugPrint(e.toString()); }
     setState(() => _loading = false);
   }
 
-  void _markForbiddenZone() async {
+  // --- ACTIONS 4X4 ---
+  void _addForbiddenZone() async {
     setState(() => _forbiddenZones.add(_currentPos));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('forbidden_zones', _forbiddenZones.map((p) => '${p.latitude},${p.longitude}').toList());
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Zone interdite mémorisée !"), backgroundColor: Colors.red));
-    if (_destination != null) _calculateRoute(_destination!); // Recalcul auto
-  }
-
-  void _sendSOS() async {
-    if (_sosContacts.isEmpty) return;
-    final msg = "URGENT 4X4 - J'ai besoin d'aide ! Position : http://maps.google.com/maps?q=${_currentPos.latitude},${_currentPos.longitude}";
-    final uri = Uri.parse("sms:${_sosContacts.first}?body=${Uri.encodeComponent(msg)}");
-    await launchUrl(uri);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Interdiction mémorisée"), backgroundColor: Colors.red));
+    if (_waypoints.isNotEmpty) _updateRoute(); // Recalcul direct
   }
 
   void _togglePOI(String type) async {
@@ -140,6 +141,13 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  void _sendSOS() async {
+    if (_sosContacts.isEmpty) return;
+    final msg = "SOS 4X4 ! Aide demandée ici : http://maps.google.com/maps?q=${_currentPos.latitude},${_currentPos.longitude}";
+    final uri = Uri.parse("sms:${_sosContacts.first}?body=${Uri.encodeComponent(msg)}");
+    await launchUrl(uri);
+  }
+
   Future<void> _saveTraceGPX() async {
     if (_trace.isEmpty) return;
     final dir = await getApplicationDocumentsDirectory();
@@ -148,11 +156,10 @@ class _MapScreenState extends State<MapScreen> {
     for (var p in _trace) { gpx += '<trkpt lat="${p.latitude}" lon="${p.longitude}"></trkpt>'; }
     gpx += '</trkseg></trk></gpx>';
     await file.writeAsString(gpx);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !")));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !"), backgroundColor: Colors.green));
   }
 
   // --- INTERFACE ---
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -163,7 +170,7 @@ class _MapScreenState extends State<MapScreen> {
             options: MapOptions(
               initialCenter: _currentPos, initialZoom: 15,
               onPositionChanged: (p, g) { if(g) setState(() => _follow = false); },
-              onLongPress: (tp, ll) => _calculateRoute(ll),
+              onLongPress: (tp, ll) { setState(() => _waypoints.add(ll)); _updateRoute(); },
             ),
             children: [
               TileLayer(
@@ -175,24 +182,25 @@ class _MapScreenState extends State<MapScreen> {
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: 8)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
-                ..._forbiddenZones.map((p) => Marker(point: p, child: const Icon(Icons.block, color: Colors.red))),
-                ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : Icons.water_drop, color: p.type == 'fuel' ? Colors.yellow : Colors.blue))),
+                ..._forbiddenZones.map((p) => Marker(point: p, child: const Icon(Icons.do_not_disturb, color: Colors.red))),
+                ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : (p.type == 'water' ? Icons.water_drop : Icons.terrain), color: p.type == 'fuel' ? Colors.yellow : (p.type == 'water' ? Colors.blue : Colors.green)))),
+                ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(point: _currentPos, width: 60, height: 60, child: const Icon(Icons.navigation, color: Colors.orange, size: 50)),
               ]),
             ],
           ),
           
-          // BARRE SUPÉRIEURE : SOS, Info, Record
+          // HUD HAUT
           Positioned(top: 40, left: 10, right: 10, child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _btn(Icons.warning, Colors.red, _sendSOS),
               if (_route.isNotEmpty) Container(
-                padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.cyanAccent)),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.cyanAccent)),
                 child: Row(children: [
-                  Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                  IconButton(icon: const Icon(Icons.close, color: Colors.red, size: 20), onPressed: () => setState(() => _route = [])),
+                  Text("${(_remDist/1000).toStringAsFixed(1)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.red, size: 20), onPressed: () => setState(() { _route = []; _waypoints.clear(); _remDist = 0; })),
                 ]),
               ),
               _btn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey.shade800, () {
@@ -202,23 +210,24 @@ class _MapScreenState extends State<MapScreen> {
             ],
           )),
 
-          // OUTILS GAUCHE : Météo, Interdit, Eau, Essence
+          // BARRE GAUCHE (Interdictions, POI, Météo)
           Positioned(left: 10, top: 120, child: Column(children: [
-            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(30)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
+            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
-            _btn(Icons.block, Colors.red, _markForbiddenZone),
+            _btn(Icons.block, Colors.red, _addForbiddenZone),
             const SizedBox(height: 15),
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("water", Icons.water_drop, Colors.blue),
+            _poiBtn("camp", Icons.terrain, Colors.green),
           ])),
 
-          // OUTILS DROITE : Recherche, Sat, Recenter, Settings
+          // BARRE DROITE (Recherche, Sat, GPS, Params)
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(Icons.search, Colors.cyan.shade700, () {
               final c = TextEditingController();
               showDialog(context: context, builder: (ctx) => AlertDialog(
-                title: const Text("Naviguer vers :"),
-                content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ville, Adresse...")),
+                title: const Text("Aller vers :"),
+                content: TextField(controller: c, decoration: const InputDecoration(hintText: "Pignan, Adresse...")),
                 actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _searchAddress(c.text); nav.pop(); }, child: const Text("GO"))],
               ));
             }),
@@ -230,7 +239,7 @@ class _MapScreenState extends State<MapScreen> {
             _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
 
-          // DASHBOARD (Bottom)
+          // DASHBOARD BAS
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 90, color: Colors.black,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -247,14 +256,14 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: t, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
+  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
   
   void _showSettings() {
     final c = TextEditingController(text: _sosContacts.isNotEmpty ? _sosContacts.first : "");
     showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text("Numéro SOS"), 
+      title: const Text("Tél SOS"), 
       content: TextField(controller: c, keyboardType: TextInputType.phone), 
       actions: [TextButton(onPressed: () async { 
         if(c.text.isEmpty) return; 
