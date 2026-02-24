@@ -11,34 +11,44 @@ class RouteData {
 class RoutingService {
   RoutingService(String _); 
 
-  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints) async {
+  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> avoidPoints) async {
     if (waypoints.length < 2) return null;
 
     final String lonLats = waypoints.map((p) => '${p.longitude},${p.latitude}').join('|');
+    final String blocks = avoidPoints.map((p) => '${p.longitude},${p.latitude},50').join('|');
 
-    // SCRIPT ULTRA-PERMISSIF : 
-    // On ignore les accès restreints et on donne un coût dérisoire aux chemins
+    // SCRIPT DEFENDER 110 : 
+    // On accepte tout ce qui est 'track' (piste) mais on fuit les 'path' (sentiers étroits).
     const customProfile = '''
 --- context:global ---
 assign track_priority = 0.1
 --- context:way ---
-assign is_forbidden = 0
+
+# Définition d'une piste praticable pour un 4x4
+assign is_4x4_track = if highway=track then 1 else 0
+# On évite les sentiers de randonnée (trop étroits)
+assign is_too_narrow = if highway=path|footway|bridleway then 1 else 0
+
 assign costfactor
-  if highway=track|path|unclassified then 1.0
+  if is_too_narrow then 1000
+  else if is_4x4_track then 1.0
   else if highway=motorway|motorway_link|trunk|trunk_link then 500
-  else if highway=primary|primary_link|secondary|secondary_link then 200
-  else if highway=tertiary|tertiary_link then 50
+  else if highway=primary|secondary then 200
+  else if highway=tertiary|unclassified then 10
   else 2.0
 ''';
 
-    final url = Uri.parse('https://brouter.de/brouter')
-        .replace(queryParameters: {
+    final queryParams = {
       'lonlats': lonLats,
       'profile': 'moped', 
       'alternativeidx': '0',
       'format': 'geojson',
       'customprofile': customProfile,
-    });
+    };
+    
+    if (blocks.isNotEmpty) queryParams['bookings'] = blocks; 
+
+    final url = Uri.parse('https://brouter.de/brouter').replace(queryParameters: queryParams);
     
     try {
       final response = await http.get(url);
