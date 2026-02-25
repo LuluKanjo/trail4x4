@@ -12,18 +12,15 @@ class RoutingService {
   final String apiKey;
   RoutingService(this.apiKey);
 
-  // RÉPARATION : On ajoute "{String profile = 'car'}" ici pour accepter le switch
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> avoid, {String profile = 'car'}) async {
     try {
       final coords = waypoints.map((w) => '${w.longitude},${w.latitude}').join(';');
-      // L'URL utilise maintenant le profil choisi (car ou foot)
       final url = 'https://router.project-osrm.org/route/v1/$profile/$coords?overview=full&geometries=polyline';
       
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['routes'] == null || data['routes'].isEmpty) return null;
-        
         final String encodedPoly = data['routes'][0]['geometry'];
         final double dist = data['routes'][0]['distance'].toDouble();
         return RouteData(_decodePolyline(encodedPoly), dist);
