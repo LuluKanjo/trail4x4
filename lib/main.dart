@@ -42,6 +42,8 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
+  LatLng? _lastPos; // Pour calculer le Tripmaster
+  
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isRec = false, _loading = false;
   bool _isNavigating = false; 
@@ -49,7 +51,10 @@ class _MapScreenState extends State<MapScreen> {
   
   HiveCacheStore? _cacheStore;
   
-  // VARIABLES INCLINOMÈTRE ET CALIBRATION
+  // NOUVELLES OPTIONS : NUIT & TRIPMASTER
+  bool _isNightMode = false;
+  double _tripDistance = 0.0;
+
   double _rawPitch = 0.0, _rawRoll = 0.0;
   double _pitchOffset = 0.0, _rollOffset = 0.0;
   double _pitch = 0.0, _roll = 0.0;
@@ -60,6 +65,9 @@ class _MapScreenState extends State<MapScreen> {
   List<LatLng> _importedTrace = []; 
   final List<LatLng> _forbiddenZones = [];
   final List<POI> _pois = [];
+  
+  // NOUVELLE OPTION : WAYPOINTS PERSONNELS
+  List<Map<String, dynamic>> _personalWaypoints = [];
   
   late RoutingService _routing;
   late POIService _poiService;
@@ -77,7 +85,6 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _rawRoll = math.atan2(event.x, event.y) * -180 / math.pi;
         _rawPitch = math.atan2(event.z, event.y) * 180 / math.pi;
-        // On soustrait l'angle de base pour avoir un vrai zéro
         _roll = _rawRoll - _rollOffset;
         _pitch = _rawPitch - _pitchOffset;
       });
@@ -98,9 +105,12 @@ class _MapScreenState extends State<MapScreen> {
   void _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // CHARGEMENT DE LA CALIBRATION MÉMORISÉE
     _rollOffset = prefs.getDouble('roll_offset') ?? 0.0;
     _pitchOffset = prefs.getDouble('pitch_offset') ?? 0.0;
+
+    // CHARGEMENT DES WAYPOINTS PERSONNELS
+    final savedWps = prefs.getStringList('personal_waypoints') ?? [];
+    _personalWaypoints = savedWps.map((s) => json.decode(s) as Map<String, dynamic>).toList();
 
     setState(() => _sosContacts = prefs.getStringList('sos_contacts') ?? []);
     final savedZones = prefs.getStringList('forbidden_zones') ?? [];
@@ -116,12 +126,17 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) setState(() {});
   }
 
-  // FONCTION DE CALIBRATION MANUELLE
+  // FONCTION SAUVEGARDE WAYPOINT
+  Future<void> _savePersonalWaypoint(String name) async {
+    final wp = {'name': name, 'lat': _currentPos.latitude, 'lon': _currentPos.longitude};
+    setState(() => _personalWaypoints.add(wp));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('personal_waypoints', _personalWaypoints.map((w) => json.encode(w)).toList());
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Bivouac mémorisé !"), backgroundColor: Colors.amber));
+  }
+
   void _calibrateInclinometer() async {
-    setState(() {
-      _rollOffset = _rawRoll;
-      _pitchOffset = _rawPitch;
-    });
+    setState(() { _rollOffset = _rawRoll; _pitchOffset = _rawPitch; });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('roll_offset', _rollOffset);
     await prefs.setDouble('pitch_offset', _pitchOffset);
@@ -138,6 +153,13 @@ class _MapScreenState extends State<MapScreen> {
         _speed = pos.speed * 3.6;
         _alt = pos.altitude;
         _head = pos.heading;
+        
+        // LE TRIPMASTER EN ACTION
+        if (_lastPos != null) {
+          _tripDistance += const Distance().as(LengthUnit.Meter, _lastPos!, _currentPos);
+        }
+        _lastPos = _currentPos;
+
         if (_isRec) _trace.add(_currentPos);
         if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
       });
@@ -179,9 +201,7 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lieu introuvable")));
       }
-    } catch (e) { 
-      debugPrint(e.toString()); 
-    }
+    } catch (e) { debugPrint(e.toString()); }
     setState(() => _loading = false);
   }
 
@@ -249,6 +269,13 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace GPX sauvegardée !"), backgroundColor: Colors.green));
   }
 
+  // LE SÉLECTEUR DE CARTE INTELLIGENT
+  String _getMapUrl() {
+    if (_isSat) return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+    if (_isNightMode) return 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'; // CartoDB Dark Matter
+    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  }
+
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
   Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
@@ -275,6 +302,27 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  // LE WIDGET TRIPMASTER
+  Widget _buildTripmaster() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.cyan)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.route, color: Colors.cyan, size: 20),
+          const SizedBox(width: 8),
+          Text("${(_tripDistance/1000).toStringAsFixed(2)} KM", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(width: 15),
+          GestureDetector(
+            onTap: () => setState(() => _tripDistance = 0.0),
+            child: const Icon(Icons.refresh, color: Colors.orange, size: 24),
+          )
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -290,9 +338,7 @@ class _MapScreenState extends State<MapScreen> {
             children: [
               TileLayer(
                 userAgentPackageName: 'com.trail4x4',
-                urlTemplate: _isSat 
-                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-                  : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: _getMapUrl(),
                 tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
               ),
               if (_importedTrace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _importedTrace, color: Colors.purpleAccent, strokeWidth: 6)]),
@@ -302,6 +348,21 @@ class _MapScreenState extends State<MapScreen> {
               MarkerLayer(markers: [
                 ..._forbiddenZones.map((p) => Marker(point: p, child: const Icon(Icons.do_not_disturb, color: Colors.red))),
                 ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : (p.type == 'water' ? Icons.water_drop : Icons.terrain), color: p.type == 'fuel' ? Colors.yellow : (p.type == 'water' ? Colors.blue : Colors.green)))),
+                
+                // AFFICHAGE DES WAYPOINTS PERSONNELS (ÉTOILE JAUNE AVEC LE NOM)
+                ..._personalWaypoints.map((wp) => Marker(
+                  point: LatLng(wp['lat'], wp['lon']),
+                  width: 80, height: 50,
+                  child: Column(children: [
+                    const Icon(Icons.star, color: Colors.amber, size: 30),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(5)),
+                      child: Text(wp['name'], style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                    )
+                  ]),
+                )),
+
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(
                   point: _currentPos, 
@@ -322,7 +383,6 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 10),
             _buildInclinometer("TANGAGE", _pitch, Icons.swap_vert),
             const SizedBox(height: 10),
-            // LE BOUTON DE CALIBRATION "TARE"
             _btn(Icons.exposure_zero, Colors.blueGrey, _calibrateInclinometer),
           ])),
 
@@ -340,6 +400,16 @@ class _MapScreenState extends State<MapScreen> {
 
           Positioned(bottom: 120, right: 15, child: Column(children: [
             if (!_isNavigating) ...[
+              // BOUTON WAYPOINT PERSONNEL
+              _btn(Icons.add_location_alt, Colors.amber, () {
+                final c = TextEditingController();
+                showDialog(context: context, builder: (ctx) => AlertDialog(
+                  title: const Text("Nommer ce spot :"),
+                  content: TextField(controller: c, decoration: const InputDecoration(hintText: "Ex: Bivouac sous les pins")),
+                  actions: [TextButton(onPressed: () { final nav = Navigator.of(ctx); _savePersonalWaypoint(c.text); nav.pop(); }, child: const Text("ENREGISTRER"))],
+                ));
+              }),
+              const SizedBox(height: 10),
               _btn(Icons.search, Colors.cyan.shade700, () {
                 final c = TextEditingController();
                 showDialog(context: context, builder: (ctx) => AlertDialog(
@@ -352,7 +422,11 @@ class _MapScreenState extends State<MapScreen> {
               _btn(Icons.folder_open, Colors.blueAccent, _loadGPX),
               const SizedBox(height: 10),
             ],
-            _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() => _isSat = !_isSat)),
+            // BOUTON SATELLITE
+            _btn(_isSat ? Icons.map : Icons.satellite_alt, Colors.black87, () => setState(() { _isSat = !_isSat; _isNightMode = false; })),
+            const SizedBox(height: 10),
+            // BOUTON MODE NUIT
+            _btn(_isNightMode ? Icons.light_mode : Icons.dark_mode, Colors.indigo, () => setState(() { _isNightMode = !_isNightMode; _isSat = false; })),
             const SizedBox(height: 10),
             _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey.shade800, () { 
               setState(() => _follow = true); 
@@ -362,6 +436,9 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 10),
             if (!_isNavigating) _btn(Icons.settings, Colors.black87, _showSettings),
           ])),
+
+          // LE TRIPMASTER PLACÉ JUSTE AU-DESSUS DU DASHBOARD
+          Positioned(bottom: 100, left: 10, child: _buildTripmaster()),
 
           Positioned(bottom: 0, left: 0, right: 0, child: Container(
             height: 90, color: Colors.black,
