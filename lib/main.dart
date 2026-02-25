@@ -133,7 +133,7 @@ class _MapScreenState extends State<MapScreen> {
     await prefs.setStringList('forbidden_zones', zonesStr);
     if(mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Chemin bloqué ! Le GPS l'évitera.")));
-      if (_route.isNotEmpty) _updateRoute(); // Recalcule la route sans ce chemin
+      if (_route.isNotEmpty) _updateRoute(); 
     }
   }
 
@@ -145,7 +145,6 @@ class _MapScreenState extends State<MapScreen> {
     .listen((pos) {
       if (!mounted) return;
       setState(() {
-        // POSITION DIRECTE (Fini la saccade)
         _currentPos = LatLng(pos.latitude, pos.longitude);
         _speed = pos.speed * 3.6;
         _alt = pos.altitude;
@@ -164,7 +163,6 @@ class _MapScreenState extends State<MapScreen> {
       // ROTATION ET CENTRAGE AUTO
       if (_followMode > 0) {
         _mapController.move(_currentPos, _mapController.camera.zoom);
-        // Si Mode 2 et qu'on avance (même en marchant), la carte tourne
         if (_followMode == 2 && _speed > 1.0) {
           _mapController.rotate(360 - _head);
         }
@@ -188,7 +186,6 @@ class _MapScreenState extends State<MapScreen> {
     if (_waypoints.isEmpty) return;
     setState(() => _loading = true);
     final profile = _isExpeditionMode ? 'foot' : 'car';
-    // On envoie les zones interdites au moteur pour qu'il les contourne
     final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenZones, profile: profile);
     if (data != null) {
       setState(() { _route.clear(); _route.addAll(data.points); _remDist = data.distance; });
@@ -244,7 +241,7 @@ class _MapScreenState extends State<MapScreen> {
           mapController: _mapController,
           options: MapOptions(
             initialCenter: _currentPos, initialZoom: 15,
-            onPositionChanged: (p, g) { if (g) setState(() => _followMode = 0); }, // Coupe le suivi si on touche la carte
+            onPositionChanged: (p, g) { if (g) setState(() => _followMode = 0); }, 
             onLongPress: (tp, ll) { setState(() { _waypoints.clear(); _waypoints.add(ll); }); _updateRoute(); },
           ),
           children: [
@@ -257,15 +254,10 @@ class _MapScreenState extends State<MapScreen> {
             if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.redAccent, strokeWidth: 5)]),
             if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: _isNavigating ? 12 : 8)]),
             MarkerLayer(markers: [
-              // Bivouacs persos
               ..._personalWaypoints.map((wp) => Marker(point: LatLng(wp['lat'], wp['lon']), child: const Icon(Icons.star, color: Colors.amber, size: 30))),
-              // Chemins Interdits
               ..._forbiddenZones.map((z) => Marker(point: z, child: const Icon(Icons.do_not_disturb_on, color: Colors.red, size: 25))),
-              // POIs (Essence, Eau)
               ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'gas' ? Icons.local_gas_station : Icons.water_drop, color: Colors.blueAccent, size: 30))),
-              // La destination
               ..._waypoints.map((w) => Marker(point: w, child: const Icon(Icons.location_on, color: Colors.red, size: 40))),
-              // NOUS (Defender)
               Marker(point: _currentPos, width: 100, height: 100, child: Transform.rotate(angle: (_followMode == 2) ? 0 : (_head * math.pi / 180), child: const Icon(Icons.navigation, color: Colors.orange, size: 50))),
             ]),
           ],
@@ -280,13 +272,13 @@ class _MapScreenState extends State<MapScreen> {
           }),
         ])),
 
-        // BOITE A OUTILS GAUCHE (GPX, REC, SPOT, INTERDIT)
+        // BOITE A OUTILS GAUCHE
         Positioned(top: 100, left: 15, child: Column(children: [
-          _glassBtn(Icons.folder_open, Colors.white, _loadGPX), // DOSSIER GPX
+          _glassBtn(Icons.folder_open, Colors.white, _loadGPX), 
           const SizedBox(height: 10),
-          _glassBtn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.white, () => setState(() => _isRec = !_isRec)), // ENREGISTREMENT
+          _glassBtn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.white, () => setState(() => _isRec = !_isRec)), 
           const SizedBox(height: 10),
-          _glassBtn(Icons.add_location_alt, Colors.amber, () { // SPOT DODO
+          _glassBtn(Icons.add_location_alt, Colors.amber, () { 
             final c = TextEditingController();
             showDialog(context: context, builder: (ctx) => AlertDialog(
               title: const Text("Nouveau Spot"), content: TextField(controller: c),
@@ -294,23 +286,23 @@ class _MapScreenState extends State<MapScreen> {
             ));
           }),
           const SizedBox(height: 10),
-          _glassBtn(Icons.do_not_disturb_on, Colors.redAccent, _markForbidden), // CHEMIN INTERDIT
+          _glassBtn(Icons.do_not_disturb_on, Colors.redAccent, _markForbidden), 
         ])),
 
-        // BOITE A OUTILS DROITE (POI, LAYERS, INCLINOMETRE)
+        // BOITE A OUTILS DROITE
         Positioned(top: 100, right: 15, child: Column(children: [
-          _glassBtn(Icons.local_gas_station, _pois.any((p)=>p.type=='gas') ? Colors.blue : Colors.white, () => _togglePOI('gas')), // ESSENCE
+          _glassBtn(Icons.local_gas_station, _pois.any((p)=>p.type=='gas') ? Colors.blue : Colors.white, () => _togglePOI('gas')), 
           const SizedBox(height: 10),
-          _glassBtn(Icons.water_drop, _pois.any((p)=>p.type=='water') ? Colors.lightBlueAccent : Colors.white, () => _togglePOI('water')), // EAU
+          _glassBtn(Icons.water_drop, _pois.any((p)=>p.type=='water') ? Colors.lightBlueAccent : Colors.white, () => _togglePOI('water')), 
           const SizedBox(height: 10),
-          _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 3)), // CARTES
+          _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 3)), 
           const SizedBox(height: 20),
-          _miniIncline("ROLL", _roll), // INCLINOMETRE
+          _miniIncline("ROLL", _roll), 
           const SizedBox(height: 5),
           _miniIncline("PITCH", _pitch),
         ])),
 
-        // DASHBOARD BAS (VITESSE, TRIP, ALT, BOUSSOLE)
+        // DASHBOARD BAS
         Positioned(bottom: 0, left: 0, right: 0, child: Container(
           height: 90, color: Colors.black.withOpacity(0.9),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -318,15 +310,14 @@ class _MapScreenState extends State<MapScreen> {
             _stat((_tripPartial/1000).toStringAsFixed(1), "TRIP KM", Colors.cyan),
             _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
             
-            // LE BOUTON MAGIQUE DU GPS (Libre -> Centré -> Boussole)
             _glassBtn(
               _followMode == 2 ? Icons.explore : (_followMode == 1 ? Icons.my_location : Icons.location_disabled), 
               _followMode == 2 ? Colors.red : (_followMode == 1 ? Colors.orange : Colors.grey), 
               () {
                 setState(() {
-                  _followMode = (_followMode + 1) % 3; // Fait tourner entre 0, 1 et 2
+                  _followMode = (_followMode + 1) % 3; 
                   if (_followMode > 0) _mapController.move(_currentPos, 16);
-                  if (_followMode != 2) _mapController.rotate(0); // Remet la carte droite
+                  if (_followMode != 2) _mapController.rotate(0); 
                 });
               }
             ),
@@ -337,7 +328,11 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  // --- WIDGETS ET DESIGNS (INCLUANT LA FORMULE MANQUANTE) ---
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 9, color: Colors.grey))]);
-  Widget _miniIncline(String l, double a) => Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Column(children: [Text(l, style: const TextStyle(fontSize: 8)), Text("${a.abs().toStringAsFixed(0)}°", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: a.abs() > 30 ? Colors.red : Colors.orange))]));
-  Widget _glassBtn(IconData i, Color c, VoidCallback o) => GestureDetector(onTap: o, child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)), child: Icon(i, color: c, size: 24)));
+  Widget _miniIncline(String l, double a) => Container(padding: const EdgeInsets.all(4), decoration: _glassDecoration(), child: Column(children: [Text(l, style: const TextStyle(fontSize: 8)), Text("${a.abs().toStringAsFixed(0)}°", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: a.abs() > 30 ? Colors.red : Colors.orange))]));
+  Widget _glassBtn(IconData i, Color c, VoidCallback o) => GestureDetector(onTap: o, child: Container(padding: const EdgeInsets.all(10), decoration: _glassDecoration(), child: Icon(i, color: c, size: 24)));
+  
+  // LA FAMEUSE LIGNE QUI MANQUAIT :
+  BoxDecoration _glassDecoration() => BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10));
 }
