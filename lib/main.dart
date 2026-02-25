@@ -46,7 +46,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   
-  // GPS & LISSAGE (Filtre Passe-Bas : $Pos_{lisse} = \alpha \cdot Pos_{brute} + (1 - \alpha) \cdot Pos_{prec}$)
+  // GPS & STABILITÉ (Filtre Passe-Bas : $Pos_{lisse} = \alpha \cdot Pos_{brute} + (1 - \alpha) \cdot Pos_{prec}$)
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   LatLng? _lastPos; 
   double _smoothLat = 0, _smoothLon = 0;
@@ -54,8 +54,8 @@ class _MapScreenState extends State<MapScreen> {
 
   // INSTRUMENTS
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
-  bool _follow = true, _loading = false, _isNavigating = false;
-  bool _isExpeditionMode = false; // FALSE = Route (Autoroute), TRUE = Piste (Plus court)
+  bool _follow = true, _loading = false;
+  bool _isExpeditionMode = false; // Mode Route par défaut
   int _mapMode = 0; 
   double _tripPartial = 0.0, _tripTotal = 0.0;
   double _pitch = 0.0, _roll = 0.0, _pitchOffset = 0.0, _rollOffset = 0.0;
@@ -73,6 +73,7 @@ class _MapScreenState extends State<MapScreen> {
     WakelockPlus.enable(); 
     _initServices();
     _startTracking();
+    _startSensors();
   }
 
   void _initServices() async {
@@ -81,6 +82,18 @@ class _MapScreenState extends State<MapScreen> {
     _routing = RoutingService('');
     _weatherService = WeatherService();
     _loadData();
+  }
+
+  void _startSensors() {
+    accelerometerEventStream().listen((event) {
+      if (!mounted) return;
+      setState(() {
+        double r = math.atan2(event.x, event.y) * -180 / math.pi;
+        double p = math.atan2(event.z, event.y) * 180 / math.pi;
+        _roll = r - _rollOffset;
+        _pitch = p - _pitchOffset;
+      });
+    });
   }
 
   void _loadData() async {
@@ -122,8 +135,8 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty) return;
     setState(() => _loading = true);
-    // On passe le profil à 'car' pour les liaisons (autoroutes) ou 'driving' pour le plus court
-    final profile = _isExpeditionMode ? 'driving' : 'car';
+    // Switch Mauguio : 'car' = Autoroute | 'foot' = Ville/Piste
+    final profile = _isExpeditionMode ? 'foot' : 'car'; 
     final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], [], profile: profile);
     if (data != null) {
       setState(() { _route.clear(); _route.addAll(data.points); _remDist = data.distance; });
@@ -134,86 +147,76 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          bool isTablet = constraints.maxWidth > 900;
-          return Row(
-            children: [
-              if (isTablet) _buildControlPanel(),
-              Expanded(child: Stack(children: [
-                _buildMap(),
-                _buildOverlays(isTablet),
-                if (_loading) const Center(child: CircularProgressIndicator(color: Colors.orange)),
-              ])),
-            ],
-          );
-        },
-      ),
+      body: Stack(children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _currentPos, initialZoom: 15,
+            onPositionChanged: (p, g) { if (g) setState(() => _follow = false); },
+            onLongPress: (tp, ll) { setState(() { _waypoints.clear(); _waypoints.add(ll); }); _updateRoute(); },
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: _mapMode == 1 ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.trail4x4.pro',
+              tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
+            ),
+            if (_route.isNotEmpty) PolylineLayer(polylines: [
+              Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: 8)
+            ]),
+            MarkerLayer(markers: [
+              Marker(point: _currentPos, width: 80, height: 80, child: Transform.rotate(angle: _head * math.pi / 180, child: const Icon(Icons.navigation, color: Colors.orange, size: 45))),
+              ..._waypoints.map((w) => Marker(point: w, child: const Icon(Icons.location_on, color: Colors.red, size: 40))),
+            ]),
+          ],
+        ),
+
+        // BARRE HAUTE
+        Positioned(top: 40, left: 15, right: 15, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          _glassBtn(Icons.warning, Colors.red, () {}),
+          
+          // BOUTON SWITCH MAUGUIO
+          GestureDetector(
+            onTap: () { setState(() => _isExpeditionMode = !_isExpeditionMode); _updateRoute(); },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+              decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)),
+              child: Row(children: [
+                Icon(_isExpeditionMode ? Icons.terrain : Icons.directions_car, color: _isExpeditionMode ? Colors.green : Colors.blue, size: 20),
+                const SizedBox(width: 8),
+                Text(_isExpeditionMode ? "PISTE" : "ROUTE", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              ]),
+            ),
+          ),
+          
+          _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 2)),
+        ])),
+
+        // INSTRUMENTS DROITE
+        Positioned(top: 100, right: 15, child: Column(children: [
+          _miniIncline("ROLL", _roll),
+          const SizedBox(height: 10),
+          _miniIncline("PITCH", _pitch),
+          const SizedBox(height: 10),
+          _glassBtn(Icons.exposure_zero, Colors.white, () { setState(() { _rollOffset += _roll; _pitchOffset += _pitch; }); }),
+        ])),
+
+        // DASHBOARD BAS
+        Positioned(bottom: 0, left: 0, right: 0, child: Container(
+          height: 100, color: Colors.black.withOpacity(0.9),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+            _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
+            _stat((_tripPartial/1000).toStringAsFixed(1), "TRIP KM", Colors.cyan),
+            _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
+            _glassBtn(Icons.my_location, _follow ? Colors.orange : Colors.white, () => setState(() => _follow = true)),
+          ]),
+        )),
+        if (_loading) const Center(child: CircularProgressIndicator(color: Colors.orange)),
+      ]),
     );
   }
 
-  Widget _buildMap() {
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: _currentPos, initialZoom: 15,
-        onPositionChanged: (p, g) { if (g) setState(() => _follow = false); },
-        onLongPress: (tp, ll) { setState(() => _waypoints.add(ll)); _updateRoute(); },
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: _mapMode == 1 ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.trail4x4.expedition.pro',
-          tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
-        ),
-        if (_route.isNotEmpty) PolylineLayer(polylines: [
-          Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: 8)
-        ]),
-        MarkerLayer(markers: [
-          Marker(point: _currentPos, width: 80, height: 80, child: Transform.rotate(angle: _head * math.pi / 180, child: const Icon(Icons.navigation, color: Colors.orange, size: 45))),
-        ]),
-      ],
-    );
-  }
-
-  Widget _buildOverlays(bool isTablet) {
-    return Stack(children: [
-      Positioned(top: 40, left: 15, right: 15, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        _btn(Icons.warning, Colors.red, () {}),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(backgroundColor: _isExpeditionMode ? Colors.green : Colors.blue),
-          onPressed: () { setState(() => _isExpeditionMode = !_isExpeditionMode); _updateRoute(); },
-          icon: Icon(_isExpeditionMode ? Icons.terrain : Icons.directions_car),
-          label: Text(_isExpeditionMode ? "MODE PISTE" : "MODE ROUTE"),
-        ),
-        _btn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 2)),
-      ])),
-      if (!isTablet) Positioned(bottom: 0, left: 0, right: 0, child: _buildMobileDashboard()),
-    ]);
-  }
-
-  Widget _buildMobileDashboard() {
-    return Container(height: 100, color: Colors.black.withOpacity(0.9), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-      _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
-      _stat((_tripPartial/1000).toStringAsFixed(1), "TRIP", Colors.cyan),
-      _btn(Icons.my_location, _follow ? Colors.orange : Colors.white, () => setState(() => _follow = true)),
-    ]));
-  }
-
-  Widget _buildControlPanel() {
-    return Container(width: 300, color: Colors.black, padding: const EdgeInsets.all(20), child: Column(children: [
-      const Text("TRAIL 4X4 PRO", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.orange)),
-      const Spacer(),
-      _stat(_speed.toStringAsFixed(0), "VITESSE", Colors.orange),
-      const SizedBox(height: 20),
-      _stat((_tripPartial/1000).toStringAsFixed(2), "TRIP PARTIEL", Colors.cyan),
-      const SizedBox(height: 10),
-      _stat((_tripTotal/1000).toStringAsFixed(2), "TOTAL KM", Colors.white),
-      const Spacer(),
-      ElevatedButton(onPressed: () => setState(() => _tripPartial = 0.0), child: const Text("RESET TRIP")),
-    ]));
-  }
-
-  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
-  Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 9, color: Colors.grey))]);
+  Widget _miniIncline(String l, double a) => Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(10)), child: Column(children: [Text(l, style: const TextStyle(fontSize: 8)), Text("${a.abs().toStringAsFixed(0)}°", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: a.abs() > 30 ? Colors.red : Colors.orange))]));
+  Widget _glassBtn(IconData i, Color c, VoidCallback o) => GestureDetector(onTap: o, child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)), child: Icon(i, color: c, size: 24)));
 }

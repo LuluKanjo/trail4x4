@@ -1,7 +1,6 @@
-import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class RouteData {
   final List<LatLng> points;
@@ -10,84 +9,44 @@ class RouteData {
 }
 
 class RoutingService {
-  final String apiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjBjZjIwMTNiNzhmODQwZDZhOGExMGE5MWFlMWFiYmM5IiwiaCI6Im11cm11cjY0In0=';
+  final String apiKey;
+  RoutingService(this.apiKey);
 
-  RoutingService(String _); 
-
-  List<List<double>> _createForbiddenBox(LatLng center) {
-    double d = 0.0005; // Zone de contournement d'environ 50m
-    return [
-      [center.longitude - d, center.latitude - d],
-      [center.longitude + d, center.latitude - d],
-      [center.longitude + d, center.latitude + d],
-      [center.longitude - d, center.latitude + d],
-      [center.longitude - d, center.latitude - d]
-    ];
-  }
-
-  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> forbiddenZones) async {
-    if (waypoints.length < 2) return null;
-
-    final url = Uri.parse('https://api.openrouteservice.org/v2/directions/cycling-mountain/geojson');
-
-    List<List<double>> coords = waypoints.map((p) => [p.longitude, p.latitude]).toList();
-
-    Map<String, dynamic> body = {
-      "coordinates": coords,
-      "elevation": false,
-      "instructions": false
-    };
-
-    if (forbiddenZones.isNotEmpty) {
-      body["options"] = {
-        "avoid_polygons": {
-          "type": "MultiPolygon",
-          "coordinates": [
-            for (var zone in forbiddenZones)
-              [ _createForbiddenBox(zone) ]
-          ]
-        }
-      };
-    }
-
+  // RÉPARATION : On ajoute "{String profile = 'car'}" ici pour accepter le switch
+  Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> avoid, {String profile = 'car'}) async {
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8',
-          'Authorization': apiKey,
-          'Content-Type': 'application/json; charset=utf-8'
-        },
-        body: json.encode(body)
-      );
-
+      final coords = waypoints.map((w) => '${w.longitude},${w.latitude}').join(';');
+      // L'URL utilise maintenant le profil choisi (car ou foot)
+      final url = 'https://router.project-osrm.org/route/v1/$profile/$coords?overview=full&geometries=polyline';
+      
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        if (data['features'] != null && data['features'].isNotEmpty) {
-          final feature = data['features'][0];
-          final geometry = feature['geometry']['coordinates'] as List;
-          
-          double dist = 0.0;
-          final props = feature['properties']['segments'] as List?;
-          if (props != null) {
-            for (var seg in props) {
-              dist += (seg['distance'] ?? 0.0);
-            }
-          }
-
-          List<LatLng> routePoints = [];
-          for (var p in geometry) {
-            routePoints.add(LatLng(p[1], p[0]));
-          }
-          
-          return RouteData(routePoints, dist);
-        }
-      } else {
-        debugPrint("Erreur ORS: ${response.statusCode} - ${response.body}");
+        if (data['routes'] == null || data['routes'].isEmpty) return null;
+        
+        final String encodedPoly = data['routes'][0]['geometry'];
+        final double dist = data['routes'][0]['distance'].toDouble();
+        return RouteData(_decodePolyline(encodedPoly), dist);
       }
     } catch (e) {
-      debugPrint("Erreur réseau ORS: $e");
+      print("Erreur routage: $e");
     }
-    return null; 
+    return null;
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    List<LatLng> poly = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do { b = encoded.codeUnitAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1)); lat += dlat;
+      shift = 0; result = 0;
+      do { b = encoded.codeUnitAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1)); lng += dlng;
+      poly.add(LatLng(lat / 1E5, lng / 1E5));
+    }
+    return poly;
   }
 }
