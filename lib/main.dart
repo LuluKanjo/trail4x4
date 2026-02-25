@@ -55,7 +55,10 @@ class _MapScreenState extends State<MapScreen> {
   // INSTRUMENTS
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _loading = false, _isNavigating = false;
+  // ignore: prefer_final_fields
+  bool _isRec = false;
   int _mapMode = 0; // 0: OSM, 1: Sat, 2: Topo
+  bool _isNightMode = false;
   double _tripPartial = 0.0, _tripTotal = 0.0;
   double _pitch = 0.0, _roll = 0.0, _pitchOffset = 0.0, _rollOffset = 0.0;
   double _rawPitch = 0.0, _rawRoll = 0.0;
@@ -142,19 +145,18 @@ class _MapScreenState extends State<MapScreen> {
   String _getMapUrl() {
     if (_mapMode == 1) return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
     if (_mapMode == 2) return 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
-    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    return _isNightMode ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   }
 
   @override
   Widget build(BuildContext context) {
-    // DÉTECTION DU TYPE D'ÉCRAN
     return Scaffold(
       body: LayoutBuilder(
         builder: (context, constraints) {
           bool isTablet = constraints.maxWidth > 900;
           return Row(
             children: [
-              if (isTablet) _buildControlPanel(), // Colonne instruments dédiée
+              if (isTablet) _buildControlPanel(), 
               Expanded(
                 child: Stack(
                   children: [
@@ -171,8 +173,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // --- COMPOSANTS UI ---
-
   Widget _buildMap() {
     return FlutterMap(
       mapController: _mapController,
@@ -184,10 +184,13 @@ class _MapScreenState extends State<MapScreen> {
       children: [
         TileLayer(
           urlTemplate: _getMapUrl(),
-          userAgentPackageName: 'com.trail4x4.pro',
+          // DÉBLOCAGE CARTE : Identité unique et pro
+          userAgentPackageName: 'com.trail4x4.expedition.pro',
           tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
         ),
-        if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.orange, strokeWidth: 10, isPolylineId: true)]),
+        if (_route.isNotEmpty) PolylineLayer(polylines: [
+          Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: 10)
+        ]),
         MarkerLayer(markers: [
           Marker(
             point: _currentPos, width: 150, height: 150,
@@ -201,10 +204,9 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // PANNEAU LATÉRAL TABLETTE
   Widget _buildControlPanel() {
     return Container(
-      width: 300,
+      width: 320,
       color: Colors.black,
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -212,13 +214,13 @@ class _MapScreenState extends State<MapScreen> {
           const Text("TRAIL 4X4 PRO", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.orange)),
           const Divider(color: Colors.grey),
           const SizedBox(height: 20),
-          _statBox(_speed.toStringAsFixed(0), "KM/H", Colors.orange, 50),
+          _statBox(_speed.toStringAsFixed(0), "KM/H", Colors.orange, 55),
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _statBox(_alt.toStringAsFixed(0), "ALTITUDE", Colors.white, 20),
-              _statBox(_getCap(_head), "CAP", Colors.cyan, 20),
+              _statBox(_alt.toStringAsFixed(0), "ALTITUDE", Colors.white, 22),
+              _statBox(_getCap(_head), "CAP", Colors.cyan, 22),
             ],
           ),
           const Spacer(),
@@ -237,9 +239,9 @@ class _MapScreenState extends State<MapScreen> {
             ],
           )),
           const SizedBox(height: 20),
-          _btnLarge("CHANGER CARTE", Icons.layers, () => setState(() => _mapMode = (_mapMode + 1) % 3)),
+          _btnLarge("CARTE", Icons.layers, () => setState(() => _mapMode = (_mapMode + 1) % 3)),
           const SizedBox(height: 10),
-          _btnLarge("CENTRER GPS", Icons.my_location, () => setState(() { _follow = true; _mapController.move(_currentPos, 15); })),
+          _btnLarge("CENTRER", Icons.my_location, () => setState(() { _follow = true; _mapController.move(_currentPos, 15); })),
         ],
       ),
     );
@@ -248,7 +250,6 @@ class _MapScreenState extends State<MapScreen> {
   Widget _buildMobileOverlays() {
     return Stack(
       children: [
-        // Infos rapides haut
         Positioned(top: 40, left: 15, right: 15, child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -257,33 +258,22 @@ class _MapScreenState extends State<MapScreen> {
             _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 3)),
           ],
         )),
-        // Tripmaster flottant
         Positioned(bottom: 110, left: 15, child: Container(padding: const EdgeInsets.all(10), decoration: _glassDecoration(), child: _tripLine("TRIP", _tripPartial, true))),
-        // Dashboard bas
         Positioned(bottom: 0, left: 0, right: 0, child: Container(height: 90, color: Colors.black.withOpacity(0.8), child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-          _statBox(_speed.toStringAsFixed(0), "KM/H", Colors.orange, 30),
-          _statBox(_alt.toStringAsFixed(0), "ALT", Colors.white, 20),
-          _statBox(_getCap(_head), "CAP", Colors.cyan, 20),
+          _statBox(_speed.toStringAsFixed(0), "KM/H", Colors.orange, 35),
+          _statBox(_alt.toStringAsFixed(0), "ALT", Colors.white, 22),
+          _statBox(_getCap(_head), "CAP", Colors.cyan, 22),
         ]))),
       ],
     );
   }
 
-  // --- WIDGETS DE STYLE ---
-
   Widget _statBox(String v, String l, Color c, double size) => Column(children: [Text(v, style: TextStyle(fontSize: size, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
-  
   Widget _instrumentTile(String title, Widget child) => Container(width: double.infinity, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(15)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 10, color: Colors.orange)), const SizedBox(height: 10), child]));
-
   Widget _miniIncline(String l, double a) => Column(children: [Text(l, style: const TextStyle(fontSize: 9)), Text("${a.abs().toStringAsFixed(0)}°", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: a.abs() > 30 ? Colors.red : Colors.white))]);
-
   Widget _tripLine(String l, double v, bool reset) => Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey)), Text("${(v/1000).toStringAsFixed(2)} KM", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), if(reset) IconButton(icon: const Icon(Icons.refresh, size: 18, color: Colors.orange), onPressed: () => setState(() => _tripPartial = 0.0))]);
-
   Widget _btnLarge(String l, IconData i, VoidCallback o) => SizedBox(width: double.infinity, height: 50, child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.black), onPressed: o, icon: Icon(i), label: Text(l, style: const TextStyle(fontWeight: FontWeight.bold))));
-
   Widget _glassBtn(IconData i, Color c, VoidCallback o) => GestureDetector(onTap: o, child: Container(padding: const EdgeInsets.all(10), decoration: _glassDecoration(), child: Icon(i, color: c)));
-
   BoxDecoration _glassDecoration() => BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10));
-
   String _getCap(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 }
