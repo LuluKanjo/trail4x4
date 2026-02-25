@@ -97,6 +97,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.12"
+  dio:
+    dependency: transitive
+    description:
+      name: dio
+      sha256: b9d46faecab38fc8cc286f80bc4d61a3bb5d4ac49e51ed877b4d6706efe57b25
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.9.1"
+  dio_cache_interceptor:
+    dependency: transitive
+    description:
+      name: dio_cache_interceptor
+      sha256: "1346705a2057c265014d7696e3e2318b560bfb00b484dac7f9b01e2ceaebb07d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.5.1"
+  dio_cache_interceptor_hive_store:
+    dependency: "direct main"
+    description:
+      name: dio_cache_interceptor_hive_store
+      sha256: "127cda24a485f5b6469172edd8b81fac819147318bedd654be167527c498bf55"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.0.0"
+  dio_web_adapter:
+    dependency: transitive
+    description:
+      name: dio_web_adapter
+      sha256: "7586e476d70caecaf1686d21eee7247ea43ef5c345eab9e0cc3583ff13378d78"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.1"
   fake_async:
     dependency: transitive
     description:
@@ -158,6 +190,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.2"
+  flutter_map_cache:
+    dependency: "direct main"
+    description:
+      name: flutter_map_cache
+      sha256: "5b30c9b0d36315a22f4ee070737104a6017e7ff990e8addc8128ba81786e03ef"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.5.2"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
@@ -240,6 +280,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.0"
+  hive_ce:
+    dependency: transitive
+    description:
+      name: hive_ce
+      sha256: "8e9980e68643afb1e765d3af32b47996552a64e190d03faf622cea07c1294418"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.19.3"
   hooks:
     dependency: transitive
     description:
@@ -272,6 +320,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.20.2"
+  isolate_channel:
+    dependency: transitive
+    description:
+      name: isolate_channel
+      sha256: a9d3d620695bc984244dafae00b95e4319d6974b2d77f4b9e1eb4f2efe099094
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.6.1"
+  json_annotation:
+    dependency: transitive
+    description:
+      name: json_annotation
+      sha256: cb09e7dac6210041fad964ed7fbee004f14258b4eca4040f72d1234062ace4c8
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.11.0"
   latlong2:
     dependency: "direct main"
     description:
@@ -365,6 +429,14 @@ packages:
     description:
       name: mgrs_dart
       sha256: fb89ae62f05fa0bb90f70c31fc870bcbcfd516c843fb554452ab3396f78586f7
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.0"
+  mime:
+    dependency: transitive
+    description:
+      name: mime
+      sha256: "41a20518f0cb1256669420fdba0cd90d21561e560ac240f26ef8322e45bb7ed6"
       url: "https://pub.dev"
     source: hosted
     version: "2.0.0"
@@ -564,18 +636,18 @@ packages:
     dependency: "direct main"
     description:
       name: sensors_plus
-      sha256: "6898cd4490ffc27fea4de5976585e92fae55355175d46c6c3b3d719d42f9e230"
+      sha256: "56e8cd4260d9ed8e00ecd8da5d9fdc8a1b2ec12345a750dfa51ff83fcf12e3fa"
       url: "https://pub.dev"
     source: hosted
-    version: "5.0.1"
+    version: "7.0.0"
   sensors_plus_platform_interface:
     dependency: transitive
     description:
       name: sensors_plus_platform_interface
-      sha256: bc472d6cfd622acb4f020e726433ee31788b038056691ba433fec80e448a094f
+      sha256: "58815d2f5e46c0c41c40fb39375d3f127306f7742efe3b891c0b1c87e2b5cd5d"
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.0"
+    version: "2.0.1"
   shared_preferences:
     dependency: "direct main"
     description:
