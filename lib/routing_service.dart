@@ -26,7 +26,7 @@ class RoutingService {
         return RouteData(_decodePolyline(encodedPoly), dist);
       }
     } catch (e) {
-      print("Erreur routage: $e");
+      debugPrint("Erreur routage: $e");
     }
     return null;
   }
