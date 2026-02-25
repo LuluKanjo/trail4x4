@@ -1,6 +1,7 @@
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:flutter/foundation.dart'; // Pour debugPrint
 
 class RouteData {
   final List<LatLng> points;
@@ -12,6 +13,7 @@ class RoutingService {
   final String apiKey;
   RoutingService(this.apiKey);
 
+  // Correction : Ajout du paramètre 'profile'
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> avoid, {String profile = 'car'}) async {
     try {
       final coords = waypoints.map((w) => '${w.longitude},${w.latitude}').join(';');

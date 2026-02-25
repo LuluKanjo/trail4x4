@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io'; // INDISPENSABLE POUR LE FICHIER GPX
 import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -146,24 +147,12 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty) return;
     setState(() => _loading = true);
-    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], [], profile: _isNavigating ? 'car' : 'driving');
+    // Switch de profil : 'car' pour Waze (autoroute) / 'foot' pour Piste (ville/court)
+    final profile = _isNavigating ? 'car' : 'foot';
+    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], [], profile: profile);
     if (data != null) {
       setState(() { _route.clear(); _route.addAll(data.points); _remDist = data.distance; });
     }
-    setState(() => _loading = false);
-  }
-
-  Future<void> _searchAddress(String address) async {
-    setState(() => _loading = true);
-    try {
-      final res = await http.get(Uri.parse('https://nominatim.openstreetmap.org/search?q=$address&format=json&limit=1'), headers: {'User-Agent': 'Trail4x4-Pro'});
-      final data = json.decode(res.body);
-      if (data.isNotEmpty) {
-        final dest = LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
-        setState(() => _waypoints.add(dest));
-        await _updateRoute();
-      }
-    } catch (e) { debugPrint(e.toString()); }
     setState(() => _loading = false);
   }
 
@@ -180,12 +169,6 @@ class _MapScreenState extends State<MapScreen> {
         _mapController.move(newTrace.first, 13); 
       }
     }
-  }
-
-  void _sendSOS() async {
-    if (_sosContacts.isEmpty) return;
-    final msg = "SOS 4X4 ! Position : http://maps.google.com/?q=${_currentPos.latitude},${_currentPos.longitude}";
-    launchUrl(Uri.parse("sms:${_sosContacts.first}?body=${Uri.encodeComponent(msg)}"));
   }
 
   String _getMapUrl() {
@@ -207,7 +190,7 @@ class _MapScreenState extends State<MapScreen> {
                 child: Stack(
                   children: [
                     _buildMap(),
-                    if (!isTablet) _buildMobileOverlays(),
+                    _buildFullOverlays(), // ON RESSORT TOUT LE MATOS
                     if (_isDownloading) Positioned(top: 100, left: 50, right: 50, child: Container(padding: const EdgeInsets.all(10), color: Colors.black87, child: const LinearProgressIndicator(color: Colors.orange))),
                     if (_loading) const Center(child: CircularProgressIndicator(color: Colors.orange)),
                   ],
@@ -224,100 +207,82 @@ class _MapScreenState extends State<MapScreen> {
     return FlutterMap(
       mapController: _mapController,
       options: MapOptions(
-        initialCenter: _currentPos,
-        initialZoom: 15,
+        initialCenter: _currentPos, initialZoom: 15,
         onPositionChanged: (p, g) { if (g) setState(() => _follow = false); },
-        onLongPress: (tp, ll) { setState(() { _waypoints.add(ll); }); _updateRoute(); },
+        onLongPress: (tp, ll) { setState(() { _waypoints.clear(); _waypoints.add(ll); }); _updateRoute(); },
       ),
       children: [
         TileLayer(
           urlTemplate: _getMapUrl(),
-          userAgentPackageName: 'com.trail4x4.expedition.pro',
+          userAgentPackageName: 'com.trail4x4.expedition.pro', // DÉBLOQUE LA CARTE
           tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
         ),
         if (_importedTrace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _importedTrace, color: Colors.purpleAccent, strokeWidth: 6)]),
-        if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: 10)]),
-        if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.cyanAccent, strokeWidth: 4)]),
+        PolylineLayer(polylines: [
+          if (_route.isNotEmpty) Polyline(points: List<LatLng>.from(_route), color: Colors.orange, strokeWidth: 8)
+        ]),
         MarkerLayer(markers: [
-          ..._personalWaypoints.map((wp) => Marker(point: LatLng(wp['lat'], wp['lon']), child: const Icon(Icons.star, color: Colors.amber, size: 30))),
-          Marker(
-            point: _currentPos, width: 150, height: 150,
-            child: Transform.rotate(
-              angle: _head * math.pi / 180,
-              child: const Icon(Icons.navigation, color: Colors.orange, size: 50),
-            ),
-          ),
+          Marker(point: _currentPos, width: 80, height: 80, child: Transform.rotate(angle: _head * math.pi / 180, child: const Icon(Icons.navigation, color: Colors.orange, size: 45))),
+          ..._waypoints.map((w) => Marker(point: w, child: const Icon(Icons.location_on, color: Colors.red, size: 40))),
         ]),
       ],
     );
   }
 
-  // --- VERSION MOBILE : TOUS LES OBJETS SONT RÉAPPARUS ICI ---
-  Widget _buildMobileOverlays() {
-    return Stack(
-      children: [
-        // HAUT : SOS, METEO, SEARCH, SWITCH, DOWNLOAD
-        Positioned(top: 40, left: 10, right: 10, child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _glassBtn(Icons.warning, Colors.red, _sendSOS),
-            Container(padding: const EdgeInsets.all(8), decoration: _glassDecoration(), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
-            _glassBtn(Icons.search, Colors.cyan, () {
-               final c = TextEditingController();
-               showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Chercher :"), content: TextField(controller: c), actions: [TextButton(onPressed: () { _searchAddress(c.text); Navigator.pop(ctx); }, child: const Text("GO"))]));
-            }),
-            _glassBtn(_isNavigating ? Icons.directions_car : Icons.terrain, _isNavigating ? Colors.blue : Colors.green, () => setState(() { _isNavigating = !_isNavigating; _updateRoute(); })),
-            _glassBtn(Icons.download_for_offline, Colors.greenAccent, () { setState(() => _isDownloading = true); Future.delayed(const Duration(seconds: 2), () => setState(() => _isDownloading = false)); }),
-          ],
-        )),
-
-        // GAUCHE : GPX, WAYPOINT, REC
-        Positioned(top: 100, left: 15, child: Column(children: [
-          _glassBtn(Icons.folder_open, Colors.blueAccent, _loadGPX),
-          const SizedBox(height: 8),
-          _glassBtn(Icons.add_location_alt, Colors.amber, () {
-            final c = TextEditingController();
-            showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Nom du spot :"), content: TextField(controller: c), actions: [TextButton(onPressed: () { 
-              setState(() => _personalWaypoints.add({'name': c.text, 'lat': _currentPos.latitude, 'lon': _currentPos.longitude}));
-              Navigator.pop(ctx); 
-            }, child: const Text("OK"))]));
+  Widget _buildFullOverlays() {
+    return Stack(children: [
+      // HAUT : SOS, METEO, SWITCH, OFFLINE
+      Positioned(top: 40, left: 10, right: 10, child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _glassBtn(Icons.warning, Colors.red, () {
+            if (_sosContacts.isNotEmpty) launchUrl(Uri.parse("sms:${_sosContacts.first}?body=SOS"));
           }),
-          const SizedBox(height: 8),
-          _glassBtn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey, () => setState(() => _isRec = !_isRec)),
-        ])),
+          Container(padding: const EdgeInsets.all(8), decoration: _glassDecoration(), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
+          _glassBtn(_isNavigating ? Icons.directions_car : Icons.terrain, _isNavigating ? Colors.blue : Colors.green, () { setState(() => _isNavigating = !_isNavigating); _updateRoute(); }),
+          _glassBtn(Icons.download_for_offline, Colors.greenAccent, () { setState(() => _isDownloading = true); Future.delayed(const Duration(seconds: 2), () => setState(() => _isDownloading = false)); }),
+        ],
+      )),
 
-        // DROITE : INCLINOMETRE, LAYERS, NIGHT
-        Positioned(top: 100, right: 15, child: Column(children: [
-          _miniIncline("ROLL", _roll),
-          const SizedBox(height: 8),
-          _miniIncline("PITCH", _pitch),
-          const SizedBox(height: 8),
-          _glassBtn(Icons.exposure_zero, Colors.white, () { setState(() { _rollOffset += _roll; _pitchOffset += _pitch; }); }),
-          const SizedBox(height: 15),
-          _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 3)),
-          const SizedBox(height: 8),
-          _glassBtn(_isNightMode ? Icons.light_mode : Icons.dark_mode, Colors.black, () => setState(() => _isNightMode = !_isNightMode)),
-        ])),
+      // GAUCHE : GPX, WAYPOINT, REC
+      Positioned(top: 100, left: 15, child: Column(children: [
+        _glassBtn(Icons.folder_open, Colors.blueAccent, _loadGPX),
+        const SizedBox(height: 8),
+        _glassBtn(Icons.add_location_alt, Colors.amber, () {
+           setState(() => _personalWaypoints.add({'lat': _currentPos.latitude, 'lon': _currentPos.longitude}));
+        }),
+        const SizedBox(height: 8),
+        _glassBtn(_isRec ? Icons.stop : Icons.fiber_manual_record, _isRec ? Colors.red : Colors.grey, () => setState(() => _isRec = !_isRec)),
+      ])),
 
-        // BAS : VITESSE, TRIP, ALT, CAP, RECENTER
-        Positioned(bottom: 0, left: 0, right: 0, child: Container(
-          height: 100, color: Colors.black.withOpacity(0.9),
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
-            _stat((_tripPartial/1000).toStringAsFixed(1), "TRIP KM", Colors.cyan),
-            _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
-            _stat(_getCap(_head), "CAP", Colors.cyanAccent),
-            _glassBtn(Icons.my_location, _follow ? Colors.orange : Colors.white, () => setState(() { _follow = true; _mapController.move(_currentPos, 15); })),
-          ]),
-        )),
-      ],
-    );
+      // DROITE : INCLINOMETRE, LAYERS
+      Positioned(top: 100, right: 15, child: Column(children: [
+        _miniIncline("ROLL", _roll),
+        const SizedBox(height: 8),
+        _miniIncline("PITCH", _pitch),
+        const SizedBox(height: 15),
+        _glassBtn(Icons.layers, Colors.indigo, () => setState(() => _mapMode = (_mapMode + 1) % 3)),
+        const SizedBox(height: 8),
+        _glassBtn(Icons.exposure_zero, Colors.white, () { setState(() { _rollOffset += _roll; _pitchOffset += _pitch; }); }),
+      ])),
+
+      // BAS : DASHBOARD COMPLET
+      Positioned(bottom: 0, left: 0, right: 0, child: Container(
+        height: 100, color: Colors.black.withOpacity(0.9),
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+          _stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange),
+          _stat((_tripPartial/1000).toStringAsFixed(1), "TRIP KM", Colors.cyan),
+          _stat(_alt.toStringAsFixed(0), "ALT", Colors.white),
+          _glassBtn(Icons.my_location, _follow ? Colors.orange : Colors.white, () => setState(() { _follow = true; _mapController.move(_currentPos, 15); })),
+        ]),
+      )),
+    ]);
   }
 
   Widget _buildControlPanel() {
     return Container(width: 320, color: Colors.black, padding: const EdgeInsets.all(20), child: Column(children: [
       const Text("TRAIL 4X4 PRO", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.orange)),
-      const Divider(height: 40),
+      const Spacer(),
       _stat(_speed.toStringAsFixed(0), "VITESSE", Colors.orange),
       _stat((_tripPartial/1000).toStringAsFixed(2), "TRIP KM", Colors.cyan),
       const Spacer(),
@@ -328,9 +293,8 @@ class _MapScreenState extends State<MapScreen> {
     ]));
   }
 
-  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 9, color: Colors.grey))]);
+  Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 9, color: Colors.grey))]);
   Widget _miniIncline(String l, double a) => Container(padding: const EdgeInsets.all(8), decoration: _glassDecoration(), child: Column(children: [Text(l, style: const TextStyle(fontSize: 8)), Text("${a.abs().toStringAsFixed(0)}°", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: a.abs() > 30 ? Colors.red : Colors.orange))]));
   Widget _glassBtn(IconData i, Color c, VoidCallback o) => GestureDetector(onTap: o, child: Container(padding: const EdgeInsets.all(10), decoration: _glassDecoration(), child: Icon(i, color: c, size: 24)));
   BoxDecoration _glassDecoration() => BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10));
-  String _getCap(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 }
