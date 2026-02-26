@@ -37,7 +37,6 @@ class RoutingService {
         final data = json.decode(response.body);
         final List coords = data['features'][0]['geometry']['coordinates'];
         
-        // Sécurité de conversion absolue pour éviter les crashs de tracé
         final double dist = (data['features'][0]['properties']['summary']['distance'] as num).toDouble();
         
         return RouteData(
@@ -45,11 +44,17 @@ class RoutingService {
           dist
         );
       } else {
+        // L'AUTO-SECOURS : Si le profil Piste échoue, on force le calcul par la Route.
+        if (isOffRoad) {
+          debugPrint("Piste impossible détectée. Recalcul par la route forcé...");
+          return await getOffRoadRoute(waypoints, forbiddenZones, isOffRoad: false);
+        }
+        
         debugPrint("Erreur ORS: ${response.statusCode}");
         return null;
       }
     } catch (e) {
-      debugPrint("Erreur Routing: $e");
+      debugPrint("Erreur Routing totale: $e");
       return null;
     }
   }
