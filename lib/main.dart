@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io'; // RÉPARÉ : Rebranché pour la lecture de fichiers
 import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -16,7 +16,6 @@ import 'package:flutter_map_cache/flutter_map_cache.dart';
 import 'package:dio_cache_interceptor_hive_store/dio_cache_interceptor_hive_store.dart';
 
 import 'routing_service.dart';
-import 'poi_service.dart';
 import 'weather_service.dart';
 
 void main() {
@@ -47,10 +46,11 @@ class _MapScreenState extends State<MapScreen> {
   final double _alpha = 0.18; 
 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
-  bool _follow = true, _isSat = false;
+  bool _follow = true, _isSat = false, _isNightMode = false;
   // ignore: prefer_final_fields
   bool _isRec = false; 
-  bool _loading = false, _isNavigating = false, _isNightMode = false;
+  bool _loading = false; 
+  bool _isNavigating = false, _isOffRoad = true;
   double _tripDistance = 0.0;
   String _weather = "--°C";
   
@@ -64,11 +64,9 @@ class _MapScreenState extends State<MapScreen> {
   final List<LatLng> _forbiddenZones = [];
   final List<LatLng> _importedTrace = []; 
   List<Map<String, dynamic>> _personalWaypoints = [];
-  final List<POI> _pois = [];
   
   HiveCacheStore? _cacheStore;
   late RoutingService _routing;
-  late POIService _poiService;
   late WeatherService _weatherService;
   List<String> _sosContacts = [];
 
@@ -78,7 +76,6 @@ class _MapScreenState extends State<MapScreen> {
     WakelockPlus.enable(); 
     _initCache(); 
     _routing = RoutingService('');
-    _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
     _weatherService = WeatherService();
 
     accelerometerEventStream().listen((event) {
@@ -106,15 +103,9 @@ class _MapScreenState extends State<MapScreen> {
       _rollOffset = prefs.getDouble('roll_offset') ?? 0.0;
       _pitchOffset = prefs.getDouble('pitch_offset') ?? 0.0;
       _sosContacts = prefs.getStringList('sos_contacts') ?? [];
+      _isOffRoad = prefs.getBool('is_offroad') ?? true;
       final savedWps = prefs.getStringList('personal_waypoints') ?? [];
       _personalWaypoints = savedWps.map((s) => json.decode(s) as Map<String, dynamic>).toList();
-      final savedZones = prefs.getStringList('forbidden_zones') ?? [];
-      if (savedZones.isNotEmpty) {
-        _forbiddenZones.addAll(savedZones.map((s) {
-          final p = s.split(',');
-          return LatLng(double.parse(p[0]), double.parse(p[1]));
-        }));
-      }
     });
     final w = await _weatherService.getCurrentWeather(_currentPos.latitude, _currentPos.longitude);
     if (mounted) setState(() => _weather = w);
@@ -134,13 +125,13 @@ class _MapScreenState extends State<MapScreen> {
       
       LatLng newPos = LatLng(_smoothLat, _smoothLon);
 
-      // --- LOGIQUE DE RECALCUL AUTOMATIQUE ---
-      if (_isNavigating && _route.isNotEmpty) {
-        double distToRoute = _getDistanceToRoute(newPos, _route);
-        // Si on s'éloigne de plus de 45 mètres de la trace, on recalcule
-        if (distToRoute > 45 && !_loading) {
-          _updateRoute();
+      if (_isNavigating && _route.isNotEmpty && !_loading) {
+        double d = 999999;
+        for (var p in _route) {
+          double dist = const Distance().as(LengthUnit.Meter, newPos, p);
+          if (dist < d) d = dist;
         }
+        if (d > 45) _updateRoute();
       }
 
       setState(() {
@@ -153,23 +144,11 @@ class _MapScreenState extends State<MapScreen> {
         if (_isRec) _trace.add(_currentPos);
         if (_route.isNotEmpty) _remDist = const Distance().as(LengthUnit.Meter, _currentPos, _route.last);
       });
-      
       if (_follow) {
-        // En navigation, on force un zoom "piste" à 17.5
         _mapController.move(_currentPos, _isNavigating ? 17.5 : _mapController.camera.zoom);
         if (_isNavigating && _speed > 1.0) _mapController.rotate(360 - _head);
       }
     });
-  }
-
-  // Calculateur de déviation (Distance point à segment)
-  double _getDistanceToRoute(LatLng pos, List<LatLng> route) {
-    double minDict = 999999;
-    for (int i = 0; i < route.length - 1; i++) {
-      double d = const Distance().as(LengthUnit.Meter, pos, route[i]);
-      if (d < minDict) minDict = d;
-    }
-    return minDict;
   }
 
   void _calibrateInclinometer() async {
@@ -180,18 +159,29 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _updateRoute() async {
-    if (_waypoints.isEmpty) return;
+    if (_waypoints.isEmpty || _loading) return;
     setState(() => _loading = true);
-    final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenZones);
-    if (data != null) {
-      setState(() {
-        _route.clear();
-        _route.addAll(data.points);
-        _remDist = data.distance;
-        _follow = true;
-      });
+    try {
+      final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenZones, isOffRoad: _isOffRoad);
+      if (data != null && mounted) {
+        setState(() {
+          _route.clear(); _route.addAll(data.points);
+          _remDist = data.distance; _follow = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Calcul impossible...")));
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-    setState(() => _loading = false);
+  }
+
+  Future<void> _toggleOffRoad() async {
+    if (_loading) return; 
+    setState(() => _isOffRoad = !_isOffRoad);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_offroad', _isOffRoad);
+    _updateRoute();
   }
 
   Future<void> _searchAddress(String address) async {
@@ -211,8 +201,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _loadGPX() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
     if (result != null && result.files.single.path != null) {
-      File file = File(result.files.single.path!);
-      String contents = await file.readAsString();
+      String contents = await File(result.files.single.path!).readAsString();
       RegExp tagExp = RegExp(r'lat="([^"]+)" lon="([^"]+)"');
       Iterable<RegExpMatch> matches = tagExp.allMatches(contents);
       List<LatLng> newTrace = matches.map((m) => LatLng(double.parse(m.group(1)!), double.parse(m.group(2)!))).toList();
@@ -220,15 +209,6 @@ class _MapScreenState extends State<MapScreen> {
         setState(() { _importedTrace.clear(); _importedTrace.addAll(newTrace); _follow = false; }); 
         _mapController.move(newTrace.first, 13); 
       }
-    }
-  }
-
-  void _togglePOI(String type) async {
-    if (_pois.any((p) => p.type == type)) { setState(() => _pois.removeWhere((p) => p.type == type)); }
-    else {
-      setState(() => _loading = true);
-      final newPois = await _poiService.fetchPOIs(_currentPos.latitude, _currentPos.longitude, type);
-      setState(() { _pois.addAll(newPois); _loading = false; });
     }
   }
 
@@ -260,7 +240,6 @@ class _MapScreenState extends State<MapScreen> {
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
-                ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : Icons.terrain, color: Colors.yellow, size: 20))),
                 ..._personalWaypoints.map((wp) => Marker(point: LatLng(wp['lat'], wp['lon']), child: const Icon(Icons.star, color: Colors.amber, size: 30))),
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(point: _currentPos, width: 60, height: 60, child: Transform.rotate(angle: _isNavigating ? 0 : (_head * math.pi / 180), child: const Icon(Icons.navigation, color: Colors.orange, size: 50))),
@@ -273,6 +252,8 @@ class _MapScreenState extends State<MapScreen> {
             : Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 _btn(Icons.warning, Colors.red, _sendSOS), 
                 Row(children: [
+                  _btn(_isOffRoad ? Icons.terrain : Icons.directions_car, _isOffRoad ? Colors.green.shade700 : Colors.blue.shade700, _toggleOffRoad),
+                  const SizedBox(width: 10),
                   _btn(Icons.search, Colors.cyan.shade700, () {
                     final c = TextEditingController();
                     showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Chercher :"), content: TextField(controller: c), actions: [TextButton(onPressed: () { _searchAddress(c.text); Navigator.pop(ctx); }, child: const Text("GO"))]));
@@ -283,12 +264,9 @@ class _MapScreenState extends State<MapScreen> {
               ])
           ),
 
-          if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(children: [
-            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
-            const SizedBox(height: 15),
-            _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
-            _poiBtn("camp", Icons.terrain, Colors.green),
-          ])),
+          if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent, strokeWidth: 6)),
+
+          if (!_isNavigating) Positioned(left: 10, top: 120, child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold)))),
 
           Positioned(top: 100, right: 15, child: Column(children: [
             _inclineBox("ROLL", _roll, Icons.screen_rotation),
@@ -311,8 +289,6 @@ class _MapScreenState extends State<MapScreen> {
           ])),
 
           Positioned(bottom: 0, left: 0, right: 0, child: Container(height: 90, color: Colors.black, child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [_stat(_speed.toStringAsFixed(0), "KM/H", Colors.orange), _stat(_alt.toStringAsFixed(0), "ALT", Colors.white), _stat(_getDir(_head), "CAP", Colors.cyanAccent)]))),
-          
-          if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
         ],
       ),
     );
@@ -323,7 +299,6 @@ class _MapScreenState extends State<MapScreen> {
   Widget _inclineBox(String l, double a, IconData i) => Container(width: 65, padding: const EdgeInsets.symmetric(vertical: 8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: a.abs() > 30 ? Colors.red : Colors.orange)), child: Column(children: [Text(l, style: const TextStyle(fontSize: 9)), Transform.rotate(angle: a * math.pi / 180, child: Icon(i, size: 24)), Text("${a.abs().toStringAsFixed(0)}°", style: const TextStyle(fontWeight: FontWeight.bold))]));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
-  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 
   void _showSettings(BuildContext context) {
