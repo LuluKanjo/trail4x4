@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io'; // RÉPARÉ : Rebranché pour la lecture de fichiers
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -40,11 +40,13 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   
+  // VARIABLES GPS
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   LatLng? _lastPos; 
   double _smoothLat = 0, _smoothLon = 0;
   final double _alpha = 0.18; 
 
+  // ETATS DU VEHICULE
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isNightMode = false;
   // ignore: prefer_final_fields
@@ -54,10 +56,12 @@ class _MapScreenState extends State<MapScreen> {
   double _tripDistance = 0.0;
   String _weather = "--°C";
   
+  // INCLINOMETRE
   double _rawPitch = 0.0, _rawRoll = 0.0;
   double _pitchOffset = 0.0, _rollOffset = 0.0;
   double _pitch = 0.0, _roll = 0.0;
 
+  // LISTES DE DONNEES
   final List<LatLng> _route = [];
   final List<LatLng> _waypoints = []; 
   final List<LatLng> _trace = [];
@@ -65,6 +69,7 @@ class _MapScreenState extends State<MapScreen> {
   final List<LatLng> _importedTrace = []; 
   List<Map<String, dynamic>> _personalWaypoints = [];
   
+  // SERVICES
   HiveCacheStore? _cacheStore;
   late RoutingService _routing;
   late WeatherService _weatherService;
@@ -125,6 +130,7 @@ class _MapScreenState extends State<MapScreen> {
       
       LatLng newPos = LatLng(_smoothLat, _smoothLon);
 
+      // AUTO-RECALCUL
       if (_isNavigating && _route.isNotEmpty && !_loading) {
         double d = 999999;
         for (var p in _route) {
@@ -158,19 +164,26 @@ class _MapScreenState extends State<MapScreen> {
     await prefs.setDouble('pitch_offset', _pitchOffset);
   }
 
+  // MOTEUR DE TRACÉ ROBUSTE
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty || _loading) return;
     setState(() => _loading = true);
+    
     try {
       final data = await _routing.getOffRoadRoute([_currentPos, ..._waypoints], _forbiddenZones, isOffRoad: _isOffRoad);
+      
       if (data != null && mounted) {
         setState(() {
-          _route.clear(); _route.addAll(data.points);
-          _remDist = data.distance; _follow = true;
+          _route.clear(); 
+          _route.addAll(data.points);
+          _remDist = data.distance; 
+          _follow = true;
         });
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trace impossible à calculer.", style: TextStyle(color: Colors.white)), backgroundColor: Colors.red));
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Calcul impossible...")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Panne réseau ou serveur.", style: TextStyle(color: Colors.white)), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -181,7 +194,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _isOffRoad = !_isOffRoad);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_offroad', _isOffRoad);
-    _updateRoute();
+    if (_waypoints.isNotEmpty) _updateRoute();
   }
 
   Future<void> _searchAddress(String address) async {
