@@ -16,45 +16,29 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> forbiddenZones, {bool isOffRoad = true}) async {
     if (waypoints.length < 2) return null;
 
-    final profile = isOffRoad ? 'cycling-mountain' : 'driving-car';
-    final coordinates = waypoints.map((p) => [p.longitude, p.latitude]).toList();
-    final url = Uri.parse('https://api.openrouteservice.org/v2/directions/$profile/geojson');
+    // ON PASSE SUR LE SERVEUR PUBLIC OSRM (100% Gratuit, sans clé API, ultra-fiable)
+    final coordsString = waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
+    final url = Uri.parse('http://router.project-osrm.org/route/v1/driving/$coordsString?overview=full&geometries=geojson');
     
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Authorization': apiKey.isNotEmpty ? apiKey : '5b3ce3597851110001cf624838380e92751f498991443653134e6e66', 
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        body: json.encode({
-          "coordinates": coordinates,
-          "instructions": false,
-        }),
-      );
+      final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final List coords = data['features'][0]['geometry']['coordinates'];
-        
-        final double dist = (data['features'][0]['properties']['summary']['distance'] as num).toDouble();
-        
-        return RouteData(
-          coords.map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble())).toList(),
-          dist
-        );
-      } else {
-        // L'AUTO-SECOURS : Si le profil Piste échoue, on force le calcul par la Route.
-        if (isOffRoad) {
-          debugPrint("Piste impossible détectée. Recalcul par la route forcé...");
-          return await getOffRoadRoute(waypoints, forbiddenZones, isOffRoad: false);
+        if (data['routes'] != null && data['routes'].isNotEmpty) {
+          final List coords = data['routes'][0]['geometry']['coordinates'];
+          final double dist = (data['routes'][0]['distance'] as num).toDouble();
+          
+          return RouteData(
+            coords.map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble())).toList(),
+            dist
+          );
         }
-        
-        debugPrint("Erreur ORS: ${response.statusCode}");
-        return null;
       }
+      debugPrint("Erreur OSRM: ${response.statusCode} - ${response.body}");
+      return null;
     } catch (e) {
-      debugPrint("Erreur Routing totale: $e");
+      debugPrint("Panne totale de routage: $e");
       return null;
     }
   }
