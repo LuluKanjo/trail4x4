@@ -16,12 +16,14 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> forbiddenZones, {bool isOffRoad = true}) async {
     if (waypoints.length < 2) return null;
 
-    // Profils OSRM : 'bike' pour les chemins, 'driving' pour la route
-    final profile = isOffRoad ? 'bike' : 'driving';
     final coordsString = waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
     
-    // LA RÉPARATION EST ICI : Le "s" de https:// est obligatoire sur Android !
-    final url = Uri.parse('https://router.project-osrm.org/route/v1/$profile/$coordsString?overview=full&geometries=geojson');
+    // LA RÉPARATION : Connexion aux serveurs dédiés FOSSGIS (Voiture ou Piste)
+    final baseUrl = isOffRoad 
+        ? 'https://routing.openstreetmap.de/routed-bike/route/v1/driving'
+        : 'https://routing.openstreetmap.de/routed-car/route/v1/driving';
+
+    final url = Uri.parse('$baseUrl/$coordsString?overview=full&geometries=geojson');
     
     try {
       final response = await http.get(url);
@@ -38,10 +40,17 @@ class RoutingService {
           );
         }
       }
-      debugPrint("Erreur OSRM: ${response.statusCode}");
+      
+      // AUTO-SECOURS : Si le serveur chemin ne trouve rien, on force par la route goudronnée
+      if (isOffRoad) {
+        debugPrint("Piste introuvable, tentative de recalcul par la route...");
+        return await getOffRoadRoute(waypoints, forbiddenZones, isOffRoad: false);
+      }
+
+      debugPrint("Erreur Serveur: ${response.statusCode}");
       return null;
     } catch (e) {
-      debugPrint("Panne totale: $e");
+      debugPrint("Panne totale de routage: $e");
       return null;
     }
   }
