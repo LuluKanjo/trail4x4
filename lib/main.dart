@@ -43,8 +43,6 @@ class _MapScreenState extends State<MapScreen> {
   
   LatLng _currentPos = const LatLng(43.5478, 3.7388); 
   LatLng? _lastPos; 
-  double _smoothLat = 0, _smoothLon = 0;
-  final double _alpha = 0.18; 
 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
   bool _follow = true, _isSat = false, _isNightMode = false;
@@ -117,25 +115,23 @@ class _MapScreenState extends State<MapScreen> {
 
   void _startTracking() async {
     await Geolocator.requestPermission();
+    // Précision maximale exigée
     const settings = LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
 
     Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
       if (!mounted) return;
-      if (_smoothLat == 0) { _smoothLat = pos.latitude; _smoothLon = pos.longitude; }
-      else {
-        _smoothLat = (_alpha * pos.latitude) + ((1 - _alpha) * _smoothLat);
-        _smoothLon = (_alpha * pos.longitude) + ((1 - _alpha) * _smoothLon);
-      }
       
-      LatLng newPos = LatLng(_smoothLat, _smoothLon);
+      // FINI LE LISSAGE : PRISE DIRECTE SUR L'ANTENNE GPS
+      LatLng newPos = LatLng(pos.latitude, pos.longitude);
 
+      // AUTO-RECALCUL TOLÉRANCE AUGMENTÉE À 80 MÈTRES
       if (_isNavigating && _route.isNotEmpty && !_loading) {
         double d = 999999;
         for (var p in _route) {
           double dist = const Distance().as(LengthUnit.Meter, newPos, p);
           if (dist < d) d = dist;
         }
-        if (d > 45) _updateRoute();
+        if (d > 80) _updateRoute();
       }
 
       setState(() {
@@ -162,7 +158,6 @@ class _MapScreenState extends State<MapScreen> {
     await prefs.setDouble('pitch_offset', _pitchOffset);
   }
 
-  // --- NOUVELLE FONCTION : LA MARCHE ARRIÈRE (EFFACER LA ROUTE) ---
   void _clearRoute() {
     setState(() {
       _waypoints.clear();
@@ -294,13 +289,10 @@ class _MapScreenState extends State<MapScreen> {
                     showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Chercher :"), content: TextField(controller: c), actions: [TextButton(onPressed: () { _searchAddress(c.text); Navigator.pop(ctx); }, child: const Text("GO"))]));
                   }),
                   const SizedBox(width: 10),
-                  
-                  // LA CORBEILLE APPARAÎT SEULEMENT S'IL Y A UN TRACÉ ACTIF !
                   if (_route.isNotEmpty || _waypoints.isNotEmpty) ...[
                     _btn(Icons.delete_forever, Colors.redAccent, _clearRoute),
                     const SizedBox(width: 10),
                   ],
-
                   if (_route.isNotEmpty) ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => setState(() => _isNavigating = true), child: const Text("DÉMARRER", style: TextStyle(color: Colors.white)))
                 ])
               ])
@@ -313,7 +305,6 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 15),
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("camp", Icons.terrain, Colors.green),
-            // LE NOUVEAU BOUTON D'EAU
             _poiBtn("water", Icons.water_drop, Colors.lightBlue), 
           ])),
 
