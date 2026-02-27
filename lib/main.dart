@@ -16,6 +16,7 @@ import 'package:flutter_map_cache/flutter_map_cache.dart';
 import 'package:dio_cache_interceptor_hive_store/dio_cache_interceptor_hive_store.dart';
 
 import 'routing_service.dart';
+import 'poi_service.dart';
 import 'weather_service.dart';
 
 void main() {
@@ -64,9 +65,11 @@ class _MapScreenState extends State<MapScreen> {
   final List<LatLng> _forbiddenZones = [];
   final List<LatLng> _importedTrace = []; 
   List<Map<String, dynamic>> _personalWaypoints = [];
+  final List<POI> _pois = [];
   
   HiveCacheStore? _cacheStore;
   late RoutingService _routing;
+  late POIService _poiService;
   late WeatherService _weatherService;
   List<String> _sosContacts = [];
 
@@ -76,6 +79,7 @@ class _MapScreenState extends State<MapScreen> {
     WakelockPlus.enable(); 
     _initCache(); 
     _routing = RoutingService('');
+    _poiService = POIService(tomtomKey: 'kjkV5wefMwSb5teOLQShx23C6wnmygso');
     _weatherService = WeatherService();
 
     accelerometerEventStream().listen((event) {
@@ -218,6 +222,15 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  void _togglePOI(String type) async {
+    if (_pois.any((p) => p.type == type)) { setState(() => _pois.removeWhere((p) => p.type == type)); }
+    else {
+      setState(() => _loading = true);
+      final newPois = await _poiService.fetchPOIs(_currentPos.latitude, _currentPos.longitude, type);
+      setState(() { _pois.addAll(newPois); _loading = false; });
+    }
+  }
+
   void _sendSOS() async {
     if (_sosContacts.isEmpty) return;
     final msg = "SOS 4X4 ! Aide demandée ici : http://googleusercontent.com/maps.google.com/?q=${_currentPos.latitude},${_currentPos.longitude}";
@@ -246,6 +259,7 @@ class _MapScreenState extends State<MapScreen> {
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
+                ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : Icons.terrain, color: Colors.yellow, size: 20))),
                 ..._personalWaypoints.map((wp) => Marker(point: LatLng(wp['lat'], wp['lon']), child: const Icon(Icons.star, color: Colors.amber, size: 30))),
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(point: _currentPos, width: 60, height: 60, child: Transform.rotate(angle: _isNavigating ? 0 : (_head * math.pi / 180), child: const Icon(Icons.navigation, color: Colors.orange, size: 50))),
@@ -272,7 +286,13 @@ class _MapScreenState extends State<MapScreen> {
 
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent, strokeWidth: 6)),
 
-          if (!_isNavigating) Positioned(left: 10, top: 120, child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold)))),
+          // LES BOUTONS POI SONT DE RETOUR SOUS LA MÉTÉO
+          if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
+            const SizedBox(height: 15),
+            _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
+            _poiBtn("camp", Icons.terrain, Colors.green),
+          ])),
 
           Positioned(top: 100, right: 15, child: Column(children: [
             _inclineBox("ROLL", _roll, Icons.screen_rotation),
@@ -284,7 +304,7 @@ class _MapScreenState extends State<MapScreen> {
 
           Positioned(bottom: 100, left: 10, child: _buildTripmaster()),
 
-          // BARRE DROITE RÉPARÉE : AVEC LE BOUTON SATELLITE
+          // LE BOUTON SATELLITE EST LÀ (LE PREMIER EN HAUT DE LA COLONNE) !
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(Icons.layers, _isSat ? Colors.green : Colors.blueGrey, () => setState(() { _isSat = !_isSat; _isNightMode = false; })),
             const SizedBox(height: 10),
@@ -308,6 +328,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget _inclineBox(String l, double a, IconData i) => Container(width: 65, padding: const EdgeInsets.symmetric(vertical: 8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: a.abs() > 30 ? Colors.red : Colors.orange)), child: Column(children: [Text(l, style: const TextStyle(fontSize: 9)), Transform.rotate(angle: a * math.pi / 180, child: Icon(i, size: 24)), Text("${a.abs().toStringAsFixed(0)}°", style: const TextStyle(fontWeight: FontWeight.bold))]));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
   Widget _btn(IconData i, Color b, VoidCallback o) => FloatingActionButton(heroTag: null, mini: true, backgroundColor: b, onPressed: o, child: Icon(i, color: Colors.white));
+  Widget _poiBtn(String t, IconData i, Color c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: FloatingActionButton(heroTag: null, mini: true, backgroundColor: _pois.any((p) => p.type == t) ? c : Colors.black87, onPressed: () => _togglePOI(t), child: Icon(i, color: Colors.white)));
   String _getDir(double h) { if (h < 22.5 || h >= 337.5) return "N"; if (h < 67.5) return "NE"; if (h < 112.5) return "E"; if (h < 157.5) return "SE"; if (h < 202.5) return "S"; if (h < 247.5) return "SO"; if (h < 292.5) return "O"; return "NO"; }
 
   void _showSettings(BuildContext context) {

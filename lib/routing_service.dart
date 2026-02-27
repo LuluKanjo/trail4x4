@@ -16,9 +16,12 @@ class RoutingService {
   Future<RouteData?> getOffRoadRoute(List<LatLng> waypoints, List<LatLng> forbiddenZones, {bool isOffRoad = true}) async {
     if (waypoints.length < 2) return null;
 
-    // ON PASSE SUR LE SERVEUR PUBLIC OSRM (100% Gratuit, sans clé API, ultra-fiable)
+    // Profils OSRM : 'bike' pour les chemins, 'driving' pour la route
+    final profile = isOffRoad ? 'bike' : 'driving';
     final coordsString = waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
-    final url = Uri.parse('http://router.project-osrm.org/route/v1/driving/$coordsString?overview=full&geometries=geojson');
+    
+    // LA RÉPARATION EST ICI : Le "s" de https:// est obligatoire sur Android !
+    final url = Uri.parse('https://router.project-osrm.org/route/v1/$profile/$coordsString?overview=full&geometries=geojson');
     
     try {
       final response = await http.get(url);
@@ -35,10 +38,10 @@ class RoutingService {
           );
         }
       }
-      debugPrint("Erreur OSRM: ${response.statusCode} - ${response.body}");
+      debugPrint("Erreur OSRM: ${response.statusCode}");
       return null;
     } catch (e) {
-      debugPrint("Panne totale de routage: $e");
+      debugPrint("Panne totale: $e");
       return null;
     }
   }
