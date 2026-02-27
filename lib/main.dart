@@ -45,7 +45,11 @@ class _MapScreenState extends State<MapScreen> {
   LatLng? _lastPos; 
 
   double _speed = 0, _alt = 0, _head = 0, _remDist = 0;
-  bool _follow = true, _isSat = false, _isNightMode = false;
+  bool _follow = true, _isNightMode = false;
+  
+  // LA BOÎTE DE VITESSES DES CARTES : 0 = Standard, 1 = Satellite, 2 = Topo 4x4
+  int _mapStyle = 0; 
+
   // ignore: prefer_final_fields
   bool _isRec = false; 
   bool _loading = false; 
@@ -106,6 +110,7 @@ class _MapScreenState extends State<MapScreen> {
       _pitchOffset = prefs.getDouble('pitch_offset') ?? 0.0;
       _sosContacts = prefs.getStringList('sos_contacts') ?? [];
       _isOffRoad = prefs.getBool('is_offroad') ?? true;
+      _mapStyle = prefs.getInt('map_style') ?? 0; // Mémoire du style de carte
       final savedWps = prefs.getStringList('personal_waypoints') ?? [];
       _personalWaypoints = savedWps.map((s) => json.decode(s) as Map<String, dynamic>).toList();
     });
@@ -115,16 +120,12 @@ class _MapScreenState extends State<MapScreen> {
 
   void _startTracking() async {
     await Geolocator.requestPermission();
-    // Précision maximale exigée
     const settings = LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
 
     Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
       if (!mounted) return;
-      
-      // FINI LE LISSAGE : PRISE DIRECTE SUR L'ANTENNE GPS
       LatLng newPos = LatLng(pos.latitude, pos.longitude);
 
-      // AUTO-RECALCUL TOLÉRANCE AUGMENTÉE À 80 MÈTRES
       if (_isNavigating && _route.isNotEmpty && !_loading) {
         double d = 999999;
         for (var p in _route) {
@@ -242,6 +243,14 @@ class _MapScreenState extends State<MapScreen> {
     launchUrl(Uri.parse("sms:${_sosContacts.first}?body=${Uri.encodeComponent(msg)}"));
   }
 
+  // SÉLECTEUR DE MOTEUR DE CARTE
+  String _getMapUrl() {
+    if (_isNightMode) return 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
+    if (_mapStyle == 1) return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+    if (_mapStyle == 2) return 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
+    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -257,7 +266,7 @@ class _MapScreenState extends State<MapScreen> {
             children: [
               TileLayer(
                 userAgentPackageName: 'com.trail4x4.app',
-                urlTemplate: _isSat ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : (_isNightMode ? 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png' : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+                urlTemplate: _getMapUrl(), // APPEL DU BON CALQUE ICI
                 tileProvider: _cacheStore != null ? CachedTileProvider(store: _cacheStore!) : null,
               ),
               if (_importedTrace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _importedTrace, color: Colors.purpleAccent, strokeWidth: 6)]),
@@ -319,13 +328,22 @@ class _MapScreenState extends State<MapScreen> {
           Positioned(bottom: 100, left: 10, child: _buildTripmaster()),
 
           Positioned(bottom: 120, right: 15, child: Column(children: [
-            _btn(Icons.layers, _isSat ? Colors.green : Colors.blueGrey, () => setState(() { _isSat = !_isSat; _isNightMode = false; })),
+            // LE NOUVEAU BOUTON DYNAMIQUE DES CARTES
+            _btn(
+              _mapStyle == 1 ? Icons.satellite : (_mapStyle == 2 ? Icons.landscape : Icons.map), 
+              _mapStyle == 1 ? Colors.green : (_mapStyle == 2 ? Colors.orange : Colors.blueGrey), 
+              () async { 
+                setState(() { _mapStyle = (_mapStyle + 1) % 3; _isNightMode = false; });
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setInt('map_style', _mapStyle);
+              }
+            ),
             const SizedBox(height: 10),
             _btn(Icons.settings, Colors.black87, () => _showSettings(context)), 
             const SizedBox(height: 10),
             _btn(Icons.folder_open, Colors.blueAccent, _loadGPX),
             const SizedBox(height: 10),
-            _btn(_isNightMode ? Icons.light_mode : Icons.dark_mode, Colors.indigo, () => setState(() { _isNightMode = !_isNightMode; _isSat = false; })),
+            _btn(_isNightMode ? Icons.light_mode : Icons.dark_mode, Colors.indigo, () => setState(() { _isNightMode = !_isNightMode; _mapStyle = 0; })),
             const SizedBox(height: 10),
             _btn(Icons.my_location, _follow ? Colors.orange : Colors.grey.shade800, () { setState(() => _follow = true); _mapController.move(_currentPos, 15); }),
           ])),
