@@ -162,6 +162,16 @@ class _MapScreenState extends State<MapScreen> {
     await prefs.setDouble('pitch_offset', _pitchOffset);
   }
 
+  // --- NOUVELLE FONCTION : LA MARCHE ARRIÈRE (EFFACER LA ROUTE) ---
+  void _clearRoute() {
+    setState(() {
+      _waypoints.clear();
+      _route.clear();
+      _remDist = 0;
+      _isNavigating = false;
+    });
+  }
+
   Future<void> _updateRoute() async {
     if (_waypoints.isEmpty || _loading) return;
     setState(() => _loading = true);
@@ -259,7 +269,12 @@ class _MapScreenState extends State<MapScreen> {
               if (_route.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _route, color: Colors.cyanAccent, strokeWidth: _isNavigating ? 12 : 8)]),
               if (_trace.isNotEmpty) PolylineLayer(polylines: [Polyline(points: _trace, color: Colors.orange, strokeWidth: 4)]),
               MarkerLayer(markers: [
-                ..._pois.map((p) => Marker(point: p.position, child: Icon(p.type == 'fuel' ? Icons.local_gas_station : Icons.terrain, color: Colors.yellow, size: 20))),
+                ..._pois.map((p) => Marker(point: p.position, child: Icon(
+                  p.type == 'fuel' ? Icons.local_gas_station : 
+                  p.type == 'water' ? Icons.water_drop : Icons.terrain, 
+                  color: p.type == 'water' ? Colors.lightBlueAccent : Colors.yellow, 
+                  size: 20
+                ))),
                 ..._personalWaypoints.map((wp) => Marker(point: LatLng(wp['lat'], wp['lon']), child: const Icon(Icons.star, color: Colors.amber, size: 30))),
                 ..._waypoints.map((p) => Marker(point: p, child: const Icon(Icons.location_on, color: Colors.cyanAccent))),
                 Marker(point: _currentPos, width: 60, height: 60, child: Transform.rotate(angle: _isNavigating ? 0 : (_head * math.pi / 180), child: const Icon(Icons.navigation, color: Colors.orange, size: 50))),
@@ -279,6 +294,13 @@ class _MapScreenState extends State<MapScreen> {
                     showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("Chercher :"), content: TextField(controller: c), actions: [TextButton(onPressed: () { _searchAddress(c.text); Navigator.pop(ctx); }, child: const Text("GO"))]));
                   }),
                   const SizedBox(width: 10),
+                  
+                  // LA CORBEILLE APPARAÎT SEULEMENT S'IL Y A UN TRACÉ ACTIF !
+                  if (_route.isNotEmpty || _waypoints.isNotEmpty) ...[
+                    _btn(Icons.delete_forever, Colors.redAccent, _clearRoute),
+                    const SizedBox(width: 10),
+                  ],
+
                   if (_route.isNotEmpty) ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => setState(() => _isNavigating = true), child: const Text("DÉMARRER", style: TextStyle(color: Colors.white)))
                 ])
               ])
@@ -286,12 +308,13 @@ class _MapScreenState extends State<MapScreen> {
 
           if (_loading) const Center(child: CircularProgressIndicator(color: Colors.cyanAccent, strokeWidth: 6)),
 
-          // LES BOUTONS POI SONT DE RETOUR SOUS LA MÉTÉO
           if (!_isNavigating) Positioned(left: 10, top: 120, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)), child: Text(_weather, style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
             _poiBtn("fuel", Icons.local_gas_station, Colors.yellow),
             _poiBtn("camp", Icons.terrain, Colors.green),
+            // LE NOUVEAU BOUTON D'EAU
+            _poiBtn("water", Icons.water_drop, Colors.lightBlue), 
           ])),
 
           Positioned(top: 100, right: 15, child: Column(children: [
@@ -304,7 +327,6 @@ class _MapScreenState extends State<MapScreen> {
 
           Positioned(bottom: 100, left: 10, child: _buildTripmaster()),
 
-          // LE BOUTON SATELLITE EST LÀ (LE PREMIER EN HAUT DE LA COLONNE) !
           Positioned(bottom: 120, right: 15, child: Column(children: [
             _btn(Icons.layers, _isSat ? Colors.green : Colors.blueGrey, () => setState(() { _isSat = !_isSat; _isNightMode = false; })),
             const SizedBox(height: 10),
@@ -323,7 +345,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Widget _buildNavHud() => Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.orange)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Icon(Icons.navigation, color: Colors.orange), Text("${(_remDist/1000).toStringAsFixed(1)} KM Restants", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)), IconButton(icon: const Icon(Icons.stop_circle, color: Colors.red), onPressed: () => setState(() => _isNavigating = false))]));
+  Widget _buildNavHud() => Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.orange)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Icon(Icons.navigation, color: Colors.orange), Text("${(_remDist/1000).toStringAsFixed(1)} KM Restants", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)), IconButton(icon: const Icon(Icons.stop_circle, color: Colors.red), onPressed: () { setState(() { _isNavigating = false; _clearRoute(); }); })]));
   Widget _buildTripmaster() => Container(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.cyan)), child: Row(children: [const Icon(Icons.route, color: Colors.cyan), const SizedBox(width: 8), Text("${(_tripDistance/1000).toStringAsFixed(2)} KM", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)), const SizedBox(width: 15), GestureDetector(onTap: () => setState(() => _tripDistance = 0.0), child: const Icon(Icons.refresh, color: Colors.orange))]));
   Widget _inclineBox(String l, double a, IconData i) => Container(width: 65, padding: const EdgeInsets.symmetric(vertical: 8), decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(15), border: Border.all(color: a.abs() > 30 ? Colors.red : Colors.orange)), child: Column(children: [Text(l, style: const TextStyle(fontSize: 9)), Transform.rotate(angle: a * math.pi / 180, child: Icon(i, size: 24)), Text("${a.abs().toStringAsFixed(0)}°", style: const TextStyle(fontWeight: FontWeight.bold))]));
   Widget _stat(String v, String l, Color c) => Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text(v, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: c)), Text(l, style: const TextStyle(fontSize: 10, color: Colors.grey))]);
